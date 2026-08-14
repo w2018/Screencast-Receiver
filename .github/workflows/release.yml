@@ -1,0 +1,55 @@
+# 投屏助手 CI 发布工作流
+# 推送 v* 标签时触发：构建安装包 + 发布 GitHub Release（附件含安装包与 DLL）
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust Cache
+        uses: swatinem/rust-cache@v2
+
+      - name: Install frontend dependencies
+        run: npm install
+
+      # 下载 libmpv 动态库（libmpv-2.dll + libmpv-wrapper.dll）到 src-tauri/lib
+      - name: Download libmpv DLLs
+        run: npx tauri-plugin-libmpv-api setup-lib
+
+      # 构建安装包并创建 GitHub Release
+      - name: Build & Release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: '${{ github.ref_name }}'
+          releaseBody: |
+            ## 投屏助手 ${{ github.ref_name }}
+            Windows 桌面投屏接收端（DLNA），MPV 内核。
+            - 安装包：`投屏助手_${{ github.ref_name }}_x64-setup.exe`
+            - 附件包含 libmpv-2.dll 与 libmpv-wrapper.dll
+          releaseDraft: false
+          prerelease: false
+
+      # 上传 DLL 作为 Release 附件
+      - name: Upload DLLs to Release
+        run: |
+          gh release upload "${{ github.ref_name }}" src-tauri/lib/libmpv-2.dll src-tauri/lib/libmpv-wrapper.dll --clobber
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

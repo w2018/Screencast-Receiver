@@ -1,0 +1,961 @@
+/* ===== 投屏助手 全局样式 ===== */
+
+/* MPV 嵌入窗口需要透明背景，否则视频画面无法显示 */
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  color: #eaeaea;
+  font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+  overflow: hidden;
+  height: 100%;
+}
+
+* {
+  box-sizing: border-box;
+  user-select: none;
+}
+
+.app-shell {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+}
+
+/* ===== 自定义标题栏（F10）===== */
+/* 悬浮覆盖在视频上方，隐藏后鼠标移动任意位置可唤出 */
+.titlebar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 36px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: rgba(14, 14, 26, 0.85);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  -webkit-app-region: drag;
+  user-select: none;
+  z-index: 50;
+  /* 3 秒无操作自动隐藏（F10） */
+  transition: transform 0.2s ease, opacity 0.2s ease;
+}
+
+.titlebar.hidden {
+  transform: translateY(-100%);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.titlebar-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-left: 14px;
+}
+
+.titlebar-logo {
+  color: #6366f1;
+}
+
+.titlebar-title {
+  font-size: 13px;
+  color: #c8c8d8;
+  letter-spacing: 1px;
+}
+
+.titlebar-btns {
+  display: flex;
+  height: 100%;
+}
+
+.tb-btn {
+  width: 44px;
+  height: 100%;
+  border: none;
+  background: transparent;
+  color: #a0a0b0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  -webkit-app-region: no-drag;
+}
+
+.tb-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+.tb-close:hover {
+  background: #e81123;
+  color: #fff;
+}
+
+/* ===== 视频挂载区域 ===== */
+/* 背景必须透明！MPV 通过 wid 嵌入渲染在窗口底层，
+   此 div 若用不透明背景会完全遮挡 MPV 画面（表现为只有声音、黑屏） */
+.video-surface {
+  position: absolute;
+  inset: 0;
+  background: transparent;
+  overflow: hidden;
+}
+
+.video-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  pointer-events: none;
+  z-index: 10;
+}
+
+.spinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid rgba(255, 255, 255, 0.15);
+  border-top-color: #6366f1;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.idle-text {
+  font-size: 18px;
+  color: rgba(234, 234, 234, 0.5);
+  letter-spacing: 1px;
+}
+
+.error-overlay {
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.error-text {
+  color: #f87171;
+  font-size: 14px;
+  padding: 10px 20px;
+  background: rgba(0, 0, 0, 0.6);
+  border-radius: 8px;
+  max-width: 80%;
+  text-align: center;
+}
+
+.retry-btn {
+  border: 1px solid #6366f1;
+  background: rgba(99, 102, 241, 0.2);
+  color: #fff;
+  padding: 8px 24px;
+  border-radius: 8px;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 0.15s;
+  pointer-events: auto;
+}
+
+.retry-btn:hover {
+  background: rgba(99, 102, 241, 0.4);
+}
+
+/* ===== 播放控制栏 ===== */
+.control-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 20;
+  background: rgba(10, 10, 20, 0.65);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 10px 16px 12px;
+  transition: transform 0.2s ease, opacity 0.2s ease;
+}
+
+/* ===== 进度条 ===== */
+.progress-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.time-label {
+  font-size: 12px;
+  color: rgba(234, 234, 234, 0.7);
+  font-variant-numeric: tabular-nums;
+  min-width: 40px;
+  text-align: center;
+}
+
+.progress-bar {
+  flex: 1;
+  position: relative;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+}
+
+.progress-track {
+  width: 100%;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 2px;
+  overflow: visible;
+}
+
+.progress-fill {
+  height: 100%;
+  background: #6366f1;
+  border-radius: 2px;
+}
+
+.progress-thumb {
+  position: absolute;
+  top: 50%;
+  width: 12px;
+  height: 12px;
+  background: #fff;
+  border-radius: 50%;
+  transform: translate(-50%, -50%) scale(0);
+  transition: transform 0.15s ease;
+  box-shadow: 0 0 4px rgba(0, 0, 0, 0.4);
+}
+
+.progress-bar:hover .progress-thumb,
+.progress-bar.dragging .progress-thumb {
+  transform: translate(-50%, -50%) scale(1);
+}
+
+.progress-preview {
+  position: absolute;
+  top: -6px;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.preview-tip {
+  font-size: 11px;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.75);
+  padding: 2px 6px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+/* ===== 控制按钮行 ===== */
+.controls-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ctrl-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: none;
+  background: transparent;
+  color: #d4d4e0;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, transform 0.1s;
+}
+
+.ctrl-btn:hover {
+  background: rgba(99, 102, 241, 0.25);
+  color: #fff;
+}
+
+.ctrl-btn:active {
+  transform: scale(0.92);
+}
+
+.ctrl-btn.active {
+  background: rgba(99, 102, 241, 0.35);
+  color: #fff;
+}
+
+.play-btn {
+  width: 40px;
+  height: 40px;
+  background: #6366f1;
+  color: #fff;
+  border-radius: 50%;
+  margin: 0 6px;
+}
+
+.play-btn:hover {
+  background: #4f52e0;
+  color: #fff;
+}
+
+.spacer {
+  flex: 1;
+}
+
+/* ===== 音量滑块 ===== */
+.volume-slider {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.volume-track-wrap {
+  width: 0;
+  overflow: hidden;
+  transition: width 0.2s ease;
+}
+
+.volume-track-wrap.expanded {
+  width: 70px;
+}
+
+.volume-track {
+  width: 60px;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 2px;
+  cursor: pointer;
+  margin-left: 4px;
+}
+
+.volume-fill {
+  height: 100%;
+  background: #d4d4e0;
+  border-radius: 2px;
+}
+
+/* ===== 倍速菜单 ===== */
+.speed-select {
+  position: relative;
+}
+
+.speed-btn {
+  font-size: 13px;
+  font-weight: 600;
+  width: auto;
+  padding: 0 8px;
+  min-width: 44px;
+}
+
+.speed-menu {
+  position: absolute;
+  bottom: 42px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(20, 20, 35, 0.95);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 70px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+.speed-item {
+  border: none;
+  background: transparent;
+  color: #d4d4e0;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.speed-item:hover {
+  background: rgba(99, 102, 241, 0.2);
+}
+
+.speed-item.active {
+  background: #6366f1;
+  color: #fff;
+}
+
+/* ===== 浅色主题（F10）===== */
+[data-theme="light"] body,
+[data-theme="light"] #root {
+  color: #1a1a2e;
+}
+
+[data-theme="light"] .titlebar {
+  background: rgba(245, 245, 250, 0.92);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .titlebar-title {
+  color: #333;
+}
+
+[data-theme="light"] .tb-btn {
+  color: #555;
+}
+
+[data-theme="light"] .control-bar {
+  background: rgba(255, 255, 255, 0.75);
+  border-top: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .ctrl-btn {
+  color: #555;
+}
+
+[data-theme="light"] .settings-page {
+  background: rgba(250, 250, 253, 0.97);
+  border-left: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .settings-label {
+  color: #333;
+}
+
+[data-theme="light"] .setting-label {
+  color: #333;
+}
+
+[data-theme="light"] .setting-desc {
+  color: #888;
+}
+
+[data-theme="light"] .settings-tabs button {
+  color: #666;
+}
+
+[data-theme="light"] .settings-tabs button.active {
+  color: #fff;
+}
+
+[data-theme="light"] .select,
+[data-theme="light"] .number-input {
+  background: rgba(0, 0, 0, 0.05);
+  border-color: rgba(0, 0, 0, 0.1);
+  color: #333;
+}
+
+[data-theme="light"] .key-box {
+  background: rgba(0, 0, 0, 0.04);
+  border-color: rgba(0, 0, 0, 0.15);
+  color: #333;
+}
+
+[data-theme="light"] .toast {
+  background: rgba(30, 30, 45, 0.95);
+}
+
+/* ===== 投屏请求确认弹窗 ===== */
+.modal-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 400;
+  animation: fadeIn 0.2s ease;
+}
+
+.modal {
+  width: 400px;
+  max-width: 90%;
+  background: rgba(22, 22, 38, 0.97);
+  backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 14px;
+  padding: 20px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
+  animation: modalIn 0.2s ease;
+}
+
+@keyframes modalIn {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.modal-icon {
+  color: #6366f1;
+}
+
+.modal-header h3 {
+  flex: 1;
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.modal-desc {
+  font-size: 13px;
+  color: #a0a0b0;
+  margin: 0 0 12px;
+}
+
+.modal-info {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 10px;
+  padding: 10px 14px;
+  margin-bottom: 18px;
+}
+
+.modal-info-row {
+  display: flex;
+  padding: 6px 0;
+  font-size: 13px;
+}
+
+.info-label {
+  width: 70px;
+  color: #888;
+  flex-shrink: 0;
+}
+
+.info-value {
+  color: #eaeaea;
+  word-break: break-all;
+}
+
+.info-uri {
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 12px;
+  color: #a5b4fc;
+}
+
+.modal-btns {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.modal-btn {
+  border: none;
+  padding: 9px 28px;
+  border-radius: 8px;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.modal-btn.reject {
+  background: rgba(255, 255, 255, 0.08);
+  color: #d4d4e0;
+}
+
+.modal-btn.reject:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.modal-btn.accept {
+  background: #6366f1;
+  color: #fff;
+}
+
+.modal-btn.accept:hover {
+  background: #4f52e0;
+}
+
+/* ===== Toast 通知 ===== */
+.toast {
+  position: absolute;
+  top: 48px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(20, 20, 35, 0.95);
+  backdrop-filter: blur(8px);
+  color: #fff;
+  padding: 10px 22px;
+  border-radius: 10px;
+  font-size: 13px;
+  z-index: 300;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(99, 102, 241, 0.3);
+  animation: toastIn 0.2s ease;
+  max-width: 80%;
+  text-align: center;
+}
+
+@keyframes toastIn {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
+/* ===== 设置面板 ===== */
+.settings-page {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 420px;
+  background: rgba(18, 18, 32, 0.96);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-left: 1px solid rgba(255, 255, 255, 0.08);
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.4);
+}
+
+.settings-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.settings-header h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: none;
+  background: transparent;
+  color: #a0a0b0;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.icon-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+.settings-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 10px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.settings-tabs button {
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: #a0a0b0;
+  padding: 8px 0;
+  font-size: 13px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.settings-tabs button:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: #d4d4e0;
+}
+
+.settings-tabs button.active {
+  background: rgba(99, 102, 241, 0.2);
+  color: #fff;
+}
+
+.settings-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 20px;
+}
+
+.setting-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  gap: 16px;
+}
+
+.setting-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.setting-label {
+  font-size: 14px;
+  color: #eaeaea;
+}
+
+.setting-desc {
+  font-size: 12px;
+  color: #888;
+  margin-top: 3px;
+}
+
+.setting-control {
+  flex-shrink: 0;
+}
+
+/* 开关 */
+.toggle {
+  width: 40px;
+  height: 22px;
+  border-radius: 11px;
+  background: rgba(255, 255, 255, 0.15);
+  border: none;
+  cursor: pointer;
+  position: relative;
+  transition: background 0.2s;
+  padding: 0;
+}
+
+.toggle.on {
+  background: #6366f1;
+}
+
+.toggle-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  transition: left 0.2s;
+}
+
+.toggle.on .toggle-thumb {
+  left: 20px;
+}
+
+/* 滑块 */
+.slider {
+  width: 120px;
+  accent-color: #6366f1;
+  cursor: pointer;
+}
+
+.select {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #eaeaea;
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 13px;
+  cursor: pointer;
+  outline: none;
+}
+
+.select option {
+  background: #181828;
+  color: #eaeaea;
+}
+
+.number-input {
+  width: 80px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #eaeaea;
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 13px;
+  outline: none;
+}
+
+.text-input {
+  width: 130px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #eaeaea;
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 13px;
+  outline: none;
+}
+
+.text-input:focus {
+  border-color: #6366f1;
+}
+
+/* 快捷键设置 */
+.shortcuts-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 0;
+  font-size: 12px;
+  color: #888;
+}
+
+.text-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border: none;
+  background: transparent;
+  color: #6366f1;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+}
+
+.text-btn:hover {
+  background: rgba(99, 102, 241, 0.15);
+}
+
+.shortcut-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.shortcut-name {
+  font-size: 14px;
+  color: #eaeaea;
+}
+
+.shortcut-ctrl {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.key-box {
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.06);
+  color: #eaeaea;
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  min-width: 70px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.key-box:hover {
+  border-color: #6366f1;
+}
+
+.key-box.recording {
+  border-color: #f59e0b;
+  background: rgba(245, 158, 11, 0.15);
+  color: #f59e0b;
+  animation: pulse 1s infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.global-tag {
+  font-size: 11px;
+  color: #888;
+}
+
+.setting-note {
+  font-size: 12px;
+  color: #888;
+  padding: 14px 0;
+  line-height: 1.6;
+}
+
+/* 防火墙命令复制框 */
+.fw-cmd-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin: 4px 0;
+}
+
+.fw-cmd {
+  flex: 1;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 11px;
+  color: #a5b4fc;
+  word-break: break-all;
+  line-height: 1.5;
+  user-select: text; /* 覆盖全局 user-select:none，允许手动选中复制 */
+}
+
+.fw-copy-btn {
+  flex-shrink: 0;
+}
+
+.settings-toast {
+  position: absolute;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0, 0, 0, 0.85);
+  color: #fff;
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-size: 13px;
+  z-index: 200;
+  animation: fadeIn 0.2s;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* ===== 滚动条 ===== */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 3px;
+}
