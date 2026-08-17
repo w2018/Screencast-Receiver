@@ -31,7 +31,23 @@ jobs:
       - name: Download libmpv DLLs
         run: npx tauri-plugin-libmpv-api setup-lib
 
-      # 构建安装包并创建 GitHub Release
+      # 首次构建：触发 Tauri 下载 NSIS 到 LOCALAPPDATA（此步会因插件缺失失败，可容忍）
+      - name: Prime NSIS download
+        continue-on-error: true
+        shell: pwsh
+        run: npm run tauri build
+
+      # 预置 nsis_tauri_utils 插件（CI 环境下 tauri 下载 NSIS 后可能未正确放置此插件）
+      - name: Provision NSIS plugin
+        shell: pwsh
+        run: |
+          $pluginDir = Join-Path $env:LOCALAPPDATA "tauri\NSIS\Plugins\x86-unicode\additional"
+          New-Item -ItemType Directory -Force -Path $pluginDir | Out-Null
+          Copy-Item scripts/nsis_tauri_utils.dll "$pluginDir\nsis_tauri_utils.dll" -Force
+          Write-Output "已预置插件: $pluginDir"
+          Get-ChildItem $pluginDir
+
+      # 正式构建安装包并创建 GitHub Release
       - name: Build & Release
         uses: tauri-apps/tauri-action@v0
         env:
