@@ -31,10 +31,6 @@ jobs:
       - name: Install cargo tauri-cli
         run: cargo install tauri-cli
 
-      # 下载 libmpv 动态库（libmpv-2.dll + libmpv-wrapper.dll）到 src-tauri/lib
-      - name: Download libmpv DLLs
-        run: npx tauri-plugin-libmpv-api setup-lib
-
       # 用 cargo 版 tauri build（自带 NSIS 插件，避免 npm 版插件缺失）
       - name: Build installer (cargo)
         shell: bash

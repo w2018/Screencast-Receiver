@@ -15,9 +15,6 @@ dist-ssr
 # Rust 构建产物
 /src-tauri/target/
 
-# libmpv 动态库（CI 通过 setup-lib 重新下载）
-/src-tauri/lib/*.dll
-
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
