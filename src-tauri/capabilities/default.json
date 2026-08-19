@@ -21,6 +21,7 @@
     "core:window:allow-set-size",
     "core:window:allow-inner-size",
     "core:window:allow-internal-toggle-maximize",
+    "core:window:allow-set-always-on-top",
     "clipboard-manager:allow-write-text"
   ]
 }

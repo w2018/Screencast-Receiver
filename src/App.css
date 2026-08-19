@@ -91,6 +91,14 @@ body,
   color: #fff;
 }
 
+.tb-btn.active {
+  color: #818cf8;
+}
+
+[data-theme="light"] .tb-btn.active {
+  color: #4f46e5;
+}
+
 .tb-close:hover {
   background: #e81123;
   color: #fff;
