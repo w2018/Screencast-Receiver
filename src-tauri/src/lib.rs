@@ -43,7 +43,9 @@ pub fn run() {
             commands::set_setting,
             commands::get_setting,
             commands::get_dlna_status,
-            commands::get_firewall_command
+            commands::get_firewall_command,
+            commands::check_firewall_rule,
+            commands::add_firewall_rule
         ])
         .setup(|app| {
             println!("[SETUP] 应用初始化中...");

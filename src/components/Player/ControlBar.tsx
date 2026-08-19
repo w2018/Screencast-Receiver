@@ -12,6 +12,7 @@ import {
   Settings,
   FlipHorizontal2,
   FlipVertical2,
+  Square,
 } from "lucide-react";
 import { usePlayerStore } from "../../stores/playerStore";
 import { ProgressBar } from "./ProgressBar";
@@ -26,6 +27,7 @@ interface ControlBarProps {
   onOpenSettings: () => void;
   onToggleMirrorH: () => void;
   onToggleMirrorV: () => void;
+  onStop: () => void;
   mirrorH: boolean;
   mirrorV: boolean;
 }
@@ -36,6 +38,7 @@ export function ControlBar({
   onOpenSettings,
   onToggleMirrorH,
   onToggleMirrorV,
+  onStop,
   mirrorH,
   mirrorV,
 }: ControlBarProps) {
@@ -88,6 +91,11 @@ export function ControlBar({
         {/* 前进 10 秒 */}
         <button className="ctrl-btn" title="前进 10 秒" onClick={() => seekBy(10)}>
           <RotateCw size={18} />
+        </button>
+
+        {/* 停止（结束投屏） */}
+        <button className="ctrl-btn" title="停止并结束投屏" onClick={onStop}>
+          <Square size={18} fill="currentColor" />
         </button>
 
         {/* 音量 */}

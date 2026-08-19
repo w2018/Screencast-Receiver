@@ -12,6 +12,7 @@ import { listen } from "@tauri-apps/api/event";
 import {
   initMpv,
   setVideoFilter,
+  getVideoFilter,
   loadFile,
   setVolume as mpvSetVolume,
   setSpeed as mpvSetSpeed,
@@ -85,12 +86,33 @@ function App() {
   }, [appWindow]);
 
   // ===== 镜像滤镜构建 =====
+  // 使用 mpv 原生滤镜（hflip/vflip），比 lavfi 包裹语法更可靠
   const buildFilter = useCallback((h: boolean, v: boolean) => {
     const filters: string[] = [];
     if (h) filters.push("hflip");
     if (v) filters.push("vflip");
-    return filters.length > 0 ? `lavfi=[${filters.join(",")}]` : null;
+    return filters.length > 0 ? filters.join(",") : null;
   }, []);
+
+  // 应用镜像滤镜并读回验证（诊断）
+  const applyMirror = useCallback(
+    (h: boolean, v: boolean) => {
+      const filter = buildFilter(h, v);
+      setVideoFilter(filter)
+        .then(async () => {
+          try {
+            const readback = await getVideoFilter();
+            flog(
+              `[MIRROR] 已设置滤镜 ${filter ?? "无"}，mpv 实际值: ${readback ?? "空"}`,
+            );
+          } catch (e) {
+            flog(`[MIRROR] 读回 vf 失败: ${String(e)}`);
+          }
+        })
+        .catch((e) => flog(`[MIRROR] 设置滤镜失败: ${String(e)}`));
+    },
+    [buildFilter],
+  );
 
   // ===== MPV 初始化 + 事件监听 =====
   useEffect(() => {
@@ -354,18 +376,18 @@ function App() {
   const toggleMirrorH = useCallback(() => {
     setMirrorH((prev) => {
       const next = !prev;
-      setVideoFilter(buildFilter(next, mirrorV)).catch(() => {});
+      applyMirror(next, mirrorV);
       return next;
     });
-  }, [mirrorV, buildFilter]);
+  }, [mirrorV, applyMirror]);
 
   const toggleMirrorV = useCallback(() => {
     setMirrorV((prev) => {
       const next = !prev;
-      setVideoFilter(buildFilter(mirrorH, next)).catch(() => {});
+      applyMirror(mirrorH, next);
       return next;
     });
-  }, [mirrorH, buildFilter]);
+  }, [mirrorH, applyMirror]);
 
   // ===== 快捷键动作映射（F6）=====
   const actionHandlers = useMemo<ActionHandler>(
@@ -455,14 +477,22 @@ function App() {
             onOpenSettings={() => setShowSettings(true)}
             onToggleMirrorH={toggleMirrorH}
             onToggleMirrorV={toggleMirrorV}
+            onStop={() => usePlayerStore.getState().stop()}
             mirrorH={mirrorH}
             mirrorV={mirrorV}
           />
         )}
       </VideoSurface>
 
-      {/* 设置面板 */}
-      {showSettings && <SettingsPage onClose={() => setShowSettings(false)} />}
+      {/* 设置面板（点击面板外区域或按 Esc 关闭） */}
+      {showSettings && (
+        <div
+          className="settings-overlay"
+          onClick={() => setShowSettings(false)}
+        >
+          <SettingsPage onClose={() => setShowSettings(false)} />
+        </div>
+      )}
 
       {/* 投屏请求确认弹窗 */}
       {pendingCast && (

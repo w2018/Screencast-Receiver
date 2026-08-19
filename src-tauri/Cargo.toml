@@ -1,6 +1,6 @@
 [package]
 name = "screencast-receiver"
-version = "1.0.0"
+version = "1.2.0"
 description = "投屏助手 —— Windows 桌面投屏接收端（DLNA Renderer）"
 authors = ["you"]
 edition = "2021"
@@ -26,6 +26,7 @@ tauri-plugin-libmpv = "0.3.2"
 rusqlite = { version = "0.31", features = ["bundled"] }
 uuid = { version = "1", features = ["v4"] }
 socket2 = { version = "0.5", features = ["all"] }
+base64 = "0.22"
 local-ip-address = "0.6"
 tauri-plugin-clipboard-manager = "2"
 
@@ -33,4 +34,7 @@ tauri-plugin-clipboard-manager = "2"
 tauri-plugin-autostart = "2"
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-single-instance = "2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_UI_Shell", "Win32_UI_WindowsAndMessaging", "Win32_Foundation"] }
 

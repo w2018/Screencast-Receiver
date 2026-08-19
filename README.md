@@ -1,7 +1,7 @@
 # 投屏助手 (ScreenCast Receiver)
 
 > Windows 桌面投屏接收端 —— 接收手机/设备的 DLNA 投屏，用 MPV 内核播放。
-> **版本：v1.0.0**
+> **版本：v1.1.0**
 
 ## 功能特性
 
@@ -27,7 +27,7 @@
 
 ## 安装
 
-1. 从 [Releases](https://github.com/w2018/Screencast-Receiver/releases) 下载最新 `投屏助手_1.0.0_x64-setup.exe`
+1. 从 [Releases](https://github.com/w2018/Screencast-Receiver/releases) 下载最新 `投屏助手_1.1.0_x64-setup.exe`
 2. 运行安装程序（默认安装到 `D:\投屏助手`，无需管理员权限）
 3. 安装完成后从桌面/开始菜单启动
 

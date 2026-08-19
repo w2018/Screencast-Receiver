@@ -3,8 +3,9 @@
 // 所有设置即时保存到 SQLite
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { getVersion } from "@tauri-apps/api/app";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-import { X, RotateCcw, Copy } from "lucide-react";
+import { X, RotateCcw, Copy, MonitorPlay, User } from "lucide-react";
 import {
   useSettingsStore,
   DEFAULT_SHORTCUTS,
@@ -16,7 +17,7 @@ interface SettingsPageProps {
   onClose: () => void;
 }
 
-type Tab = "general" | "playback" | "shortcuts" | "network";
+type Tab = "general" | "playback" | "shortcuts" | "network" | "about";
 
 // ===== 开关控件 =====
 function Toggle({
@@ -80,6 +81,9 @@ export function SettingsPage({ onClose }: SettingsPageProps) {
     port: number;
   } | null>(null);
   const [firewallCmd, setFirewallCmd] = useState("");
+  const [fwAllowed, setFwAllowed] = useState<boolean | null>(null);
+  const [fwBusy, setFwBusy] = useState(false);
+  const [appVersion, setAppVersion] = useState("");
 
   // 查询 DLNA 服务状态（绑定 IP + 端口）
   useEffect(() => {
@@ -90,7 +94,38 @@ export function SettingsPage({ onClose }: SettingsPageProps) {
     invoke<string>("get_firewall_command")
       .then(setFirewallCmd)
       .catch(() => {});
+    // 获取应用版本号
+    getVersion()
+      .then(setAppVersion)
+      .catch(() => {});
+    // 检查防火墙放行状态
+    invoke<boolean>("check_firewall_rule")
+      .then(setFwAllowed)
+      .catch(() => setFwAllowed(null));
   }, []);
+
+  // 一键放行防火墙（UAC 提权）
+  const allowFirewall = async () => {
+    setFwBusy(true);
+    try {
+      await invoke("add_firewall_rule");
+      flashKey("请在弹出的 UAC 窗口中点击“是”");
+      // 延迟几秒后复查状态（等 netsh 执行完）
+      setTimeout(async () => {
+        try {
+          const ok = await invoke<boolean>("check_firewall_rule");
+          setFwAllowed(ok);
+          flashKey(ok ? "防火墙已放行" : "仍未放行，请检查 UAC 或手动执行命令");
+        } catch {
+          setFwAllowed(null);
+        }
+      }, 3000);
+    } catch (e) {
+      flashKey(String(e));
+    } finally {
+      setFwBusy(false);
+    }
+  };
 
   // 复制命令到剪贴板
   const copyCommand = async () => {
@@ -134,6 +169,15 @@ export function SettingsPage({ onClose }: SettingsPageProps) {
     flashKey(global ? `已启用全局：${s.shortcuts[action].shortcut}` : "已关闭全局");
   };
 
+  // 按 Esc 关闭设置页
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
   const flashKey = (msg: string) => {
     setFlash(msg);
     setTimeout(() => setFlash(null), 2000);
@@ -144,7 +188,7 @@ export function SettingsPage({ onClose }: SettingsPageProps) {
   };
 
   return (
-    <div className="settings-page">
+    <div className="settings-page" onClick={(e) => e.stopPropagation()}>
       {/* 顶栏 */}
       <div className="settings-header">
         <h2>设置</h2>
@@ -166,6 +210,9 @@ export function SettingsPage({ onClose }: SettingsPageProps) {
         </button>
         <button className={tab === "network" ? "active" : ""} onClick={() => setTab("network")}>
           网络
+        </button>
+        <button className={tab === "about" ? "active" : ""} onClick={() => setTab("about")}>
+          关于
         </button>
       </div>
 
@@ -345,7 +392,7 @@ export function SettingsPage({ onClose }: SettingsPageProps) {
             <div className="setting-note">
               <strong>⚠️ 手机扫描不到设备时的排查：</strong>
               <br />① 确认手机与电脑在<strong>同一 Wi-Fi 局域网</strong>；
-              <br />② 放行防火墙（下面命令已含完整路径）：
+              <br />② 放行防火墙（未放行时手机无法连接投屏服务）：
             </div>
             <div className="fw-cmd-box">
               <code className="fw-cmd">{firewallCmd || "正在获取命令…"}</code>
@@ -358,10 +405,60 @@ export function SettingsPage({ onClose }: SettingsPageProps) {
                 <Copy size={14} /> 复制命令
               </button>
             </div>
+            <div className="fw-status">
+              {fwBusy ? (
+                <span className="fw-status-warn">正在请求管理员授权…</span>
+              ) : fwAllowed === true ? (
+                <span className="fw-status-ok">✔ 防火墙已放行，手机可以连接本服务</span>
+              ) : fwAllowed === false ? (
+                <span className="fw-status-warn">
+                  ⚠ 防火墙未放行，手机可能无法发现/连接本服务
+                </span>
+              ) : (
+                <span className="fw-status-warn">防火墙状态未知</span>
+              )}
+              <button
+                className="text-btn fw-allow-btn"
+                onClick={allowFirewall}
+                disabled={fwBusy || fwAllowed === true}
+              >
+                一键放行（需管理员授权）
+              </button>
+            </div>
             <div className="setting-note">
-              使用方法：复制上方命令 → 以<strong>管理员身份</strong>打开命令提示符 → 粘贴执行。
+              使用方法：点击"一键放行"→ 在弹出的 UAC 窗口点"是"；或复制上方命令 → 以<strong>管理员身份</strong>打开命令提示符 → 粘贴执行。
             </div>
           </>
+        )}
+
+        {/* ===== 关于 ===== */}
+        {tab === "about" && (
+          <div className="about">
+            <div className="about-logo">
+              <MonitorPlay size={36} />
+            </div>
+            <div className="about-name">投屏助手</div>
+            <div className="about-version">版本 v{appVersion || "1.1.0"}</div>
+            <div className="about-author">
+              <User size={13} /> 作者：曾先生
+            </div>
+            <div className="about-divider" />
+            <div className="about-desc">
+              基于 Tauri 2 + libmpv 内核的 Windows 桌面 DLNA 投屏接收端，接收手机/设备的投屏并自动播放。
+            </div>
+            <ul className="about-features">
+              <li>DLNA 投屏接收：微信 / 爱奇艺 / B 站 / 腾讯视频等 App 一键投屏</li>
+              <li>投屏授权确认：收到请求弹窗，显示设备与视频信息，允许 / 拒绝</li>
+              <li>MPV 内核播放：本地文件 / HTTP / HLS / RTSP 网络流</li>
+              <li>播放控制：播放 / 暂停 / 进度 / 倍速 / 音量 / 镜像翻转</li>
+              <li>系统托盘常驻：关闭最小化到托盘，投屏请求自动唤醒</li>
+              <li>进度记忆：自动记忆播放进度，重新打开可续播</li>
+              <li>自定义快捷键：窗口快捷键 + 全局快捷键</li>
+            </ul>
+            <div className="about-footer">
+              MIT License · Windows 平台
+            </div>
+          </div>
         )}
       </div>
 

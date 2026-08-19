@@ -116,9 +116,31 @@ export function setLoop(loop: boolean): Promise<void> {
   return setProperty("loop-file", loop ? "inf" : "no");
 }
 
-/** 设置视频滤镜（用于镜像翻转，null 清除） */
-export function setVideoFilter(filter: string | null): Promise<void> {
-  return setProperty("vf", filter ?? "");
+/** 设置视频滤镜（用于镜像翻转，null 清除）
+ * 已知问题：d3d11va 硬解下运行时设置 vf 滤镜不生效（画面不翻转），
+ * 必须先在软解状态下设置滤镜再（可选）恢复硬解；清除滤镜同样要先切软解。
+ * 镜像开启期间保持软解，确保新加载的视频也应用滤镜。 */
+export async function setVideoFilter(filter: string | null): Promise<void> {
+  const prevHwdec =
+    ((await getProperty("hwdec", "string")) as string) || "d3d11va";
+  // 先切软解，等待解码器重建（硬解→软解约 1~2 秒）
+  await setProperty("hwdec", "no");
+  await sleep(1500);
+  await setProperty("vf", filter ?? "");
+  await sleep(500);
+  if (filter === null) {
+    // 清除滤镜后恢复硬件解码
+    await setProperty("hwdec", prevHwdec);
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** 读取当前视频滤镜（诊断用） */
+export async function getVideoFilter(): Promise<string | null> {
+  return (await getProperty("vf", "string")) as string | null;
 }
 
 /** 读取当前播放位置（秒） */

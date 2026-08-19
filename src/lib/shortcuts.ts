@@ -93,7 +93,8 @@ export function handleWindowKey(e: KeyboardEvent): ShortcutAction | null {
     ShortcutAction,
     string,
   ][]) {
-    if (shortcut === key) {
+    // 字母快捷键大小写不敏感（按 C 与 Shift+C 等价）
+    if (shortcut.toLowerCase() === key.toLowerCase()) {
       e.preventDefault();
       return action;
     }

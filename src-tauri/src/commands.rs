@@ -63,3 +63,66 @@ pub fn get_firewall_command() -> Result<String, String> {
         exe_str
     ))
 }
+
+/// 检查防火墙是否已放行本程序（按程序名查询规则）
+/// 用 CREATE_NO_WINDOW 隐藏 netsh 控制台窗口，避免设置页打开时闪黑框
+#[tauri::command]
+pub fn check_firewall_rule() -> Result<bool, String> {
+    use std::os::windows::process::CommandExt;
+    let out = std::process::Command::new("netsh")
+        .args([
+            "advfirewall",
+            "firewall",
+            "show",
+            "rule",
+            "name=\"投屏助手\"",
+        ])
+        .creation_flags(0x08000000) // CREATE_NO_WINDOW：隐藏控制台窗口
+        .output()
+        .map_err(|e| e.to_string())?;
+    let text = String::from_utf8_lossy(&out.stdout).to_string();
+    let lower = text.to_lowercase();
+    // 规则存在且操作为允许（中文系统输出"允许"，英文输出"Allow"）
+    Ok(text.contains("投屏助手")
+        && (text.contains("允许") || lower.contains("allow")))
+}
+
+/// 一键放行防火墙：通过 UAC 提权执行 netsh 添加本程序的入站允许规则
+/// （覆盖 UDP 1900 SSDP 发现 + TCP 随机端口设备描述/视频流）
+#[tauri::command]
+pub fn add_firewall_rule() -> Result<(), String> {
+    use std::os::windows::ffi::OsStrExt;
+
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let exe_str = exe.display().to_string();
+    let args = format!(
+        "advfirewall firewall add rule name=\"投屏助手\" dir=in action=allow program=\"{}\" enable=yes",
+        exe_str
+    );
+    let to_wide = |s: &str| -> Vec<u16> {
+        std::ffi::OsStr::new(s)
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect()
+    };
+    let verb = to_wide("runas");
+    let file = to_wide("netsh.exe");
+    let params = to_wide(&args);
+    let dir = to_wide("");
+    let result = unsafe {
+        windows_sys::Win32::UI::Shell::ShellExecuteW(
+            std::ptr::null_mut(),
+            verb.as_ptr(),
+            file.as_ptr(),
+            params.as_ptr(),
+            dir.as_ptr(),
+            windows_sys::Win32::UI::WindowsAndMessaging::SW_HIDE,
+        )
+    };
+    // ShellExecuteW 返回值 > 32 表示成功启动
+    if result as isize <= 32 {
+        Err("未能启动管理员授权（可能被取消）。请复制下方命令，以管理员身份手动执行。".to_string())
+    } else {
+        Ok(())
+    }
+}

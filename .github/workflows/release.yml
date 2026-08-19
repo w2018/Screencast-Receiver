@@ -16,7 +16,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -27,45 +27,46 @@ jobs:
       - name: Install frontend dependencies
         run: npm install
 
+      # 安装 cargo 版 tauri-cli（自带 NSIS 插件，避免 npm 版插件缺失问题）
+      - name: Install cargo tauri-cli
+        run: cargo install tauri-cli
+
       # 下载 libmpv 动态库（libmpv-2.dll + libmpv-wrapper.dll）到 src-tauri/lib
       - name: Download libmpv DLLs
         run: npx tauri-plugin-libmpv-api setup-lib
 
-      # 首次构建：触发 Tauri 下载 NSIS 到 LOCALAPPDATA（此步会因插件缺失失败，可容忍）
-      - name: Prime NSIS download
-        continue-on-error: true
-        shell: pwsh
-        run: npm run tauri build
+      # 用 cargo 版 tauri build（自带 NSIS 插件，避免 npm 版插件缺失）
+      - name: Build installer (cargo)
+        shell: bash
+        run: cargo tauri build
 
-      # 预置 nsis_tauri_utils 插件（CI 环境下 tauri 下载 NSIS 后可能未正确放置此插件）
-      - name: Provision NSIS plugin
+      # 获取版本号（从 package.json 读取）
+      - name: Get version
+        id: version
         shell: pwsh
         run: |
-          $pluginDir = Join-Path $env:LOCALAPPDATA "tauri\NSIS\Plugins\x86-unicode\additional"
-          New-Item -ItemType Directory -Force -Path $pluginDir | Out-Null
-          Copy-Item scripts/nsis_tauri_utils.dll "$pluginDir\nsis_tauri_utils.dll" -Force
-          Write-Output "已预置插件: $pluginDir"
-          Get-ChildItem $pluginDir
+          $pkg = Get-Content package.json | ConvertFrom-Json
+          $tag = "${{ github.ref_name }}"
+          echo "version=$tag" >> $env:GITHUB_OUTPUT
+          $exeName = "投屏助手_$($tag)_x64-setup.exe"
+          echo "exeName=$exeName" >> $env:GITHUB_OUTPUT
+          Write-Output "version=$tag exeName=$exeName"
 
-      # 正式构建安装包并创建 GitHub Release
-      - name: Build & Release
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # 创建 GitHub Release 并上传所有附件
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: '${{ github.ref_name }}'
-          releaseBody: |
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          body: |
             ## 投屏助手 ${{ github.ref_name }}
-            Windows 桌面投屏接收端（DLNA），MPV 内核。
-            - 安装包：`投屏助手_${{ github.ref_name }}_x64-setup.exe`
-            - 附件包含 libmpv-2.dll 与 libmpv-wrapper.dll
-          releaseDraft: false
-          prerelease: false
 
-      # 上传 DLL 作为 Release 附件
-      - name: Upload DLLs to Release
-        run: |
-          gh release upload "${{ github.ref_name }}" src-tauri/lib/libmpv-2.dll src-tauri/lib/libmpv-wrapper.dll --clobber
+            Windows 桌面投屏接收端（DLNA），MPV 内核。
+            - **安装包**：`投屏助手_${{ github.ref_name }}_x64-setup.exe`
+            - **附件**：libmpv-2.dll 与 libmpv-wrapper.dll
+          files: |
+            src-tauri/target/release/bundle/nsis/${{ steps.version.outputs.exeName }}
+            src-tauri/lib/libmpv-2.dll
+            src-tauri/lib/libmpv-wrapper.dll
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
