@@ -1,6 +1,6 @@
 [package]
 name = "screencast-receiver"
-version = "1.2.0"
+version = "1.2.1"
 description = "投屏助手 —— Windows 桌面投屏接收端（DLNA Renderer）"
 authors = ["you"]
 edition = "2021"
