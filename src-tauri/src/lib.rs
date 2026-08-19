@@ -2,6 +2,7 @@
 mod commands;
 mod db;
 mod dlna_renderer;
+mod remote_play;
 mod tray;
 
 use tauri::{Emitter, Manager};
@@ -47,7 +48,8 @@ pub fn run() {
             commands::get_dlna_status,
             commands::get_firewall_command,
             commands::check_firewall_rule,
-            commands::add_firewall_rule
+            commands::add_firewall_rule,
+            remote_play::start_remote_play_server
         ])
         .setup(|app| {
             println!("[SETUP] 应用初始化中...");
@@ -58,6 +60,8 @@ pub fn run() {
 
             // DLNA 状态存储（供设置界面显示绑定 IP/端口）
             app.manage(dlna_renderer::DlnaStatusState(std::sync::Mutex::new(None)));
+            // 远程播放 HTTP 服务状态
+            app.manage(remote_play::RemoteState(std::sync::Mutex::new(None)));
 
             // 启动 DLNA Renderer（读取设置）
             let dlna_enabled = {

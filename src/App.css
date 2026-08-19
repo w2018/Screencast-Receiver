@@ -501,7 +501,7 @@ body,
 
 /* ===== 投屏请求确认弹窗 ===== */
 .modal-overlay {
-  position: absolute;
+  position: fixed;
   inset: 0;
   background: rgba(0, 0, 0, 0.55);
   display: flex;
@@ -584,9 +584,10 @@ body,
 
 .info-uri {
   font-family: "Cascadia Code", Consolas, monospace;
-  font-size: 12px;
+  font-size: 11px;
   color: #a5b4fc;
   user-select: text; /* 允许选中复制完整链接 */
+  word-break: break-all;
 }
 
 .modal-btns {
@@ -620,6 +621,191 @@ body,
 
 .modal-btn.accept:hover {
   background: #4f52e0;
+}
+
+/* ===== 网络视频播放弹窗 ===== */
+.remote-modal {
+  width: 520px;
+  max-width: 92vw;
+}
+
+.remote-input-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.remote-url-input {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid #3a3f4d;
+  background: #1a1d27;
+  color: #eaeaea;
+  font-size: 13px;
+  outline: none;
+}
+
+.remote-url-input:focus {
+  border-color: #6366f1;
+}
+
+.remote-url-input::placeholder {
+  color: #6b7280;
+}
+
+.remote-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 6px 0 14px;
+  color: #888;
+  font-size: 13px;
+}
+
+.remote-divider::before,
+.remote-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.remote-scan {
+  display: flex;
+  gap: 18px;
+  margin-bottom: 12px;
+}
+
+.remote-qr {
+  width: 150px;
+  height: 150px;
+  border-radius: 10px;
+  background: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.remote-qr img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.remote-qr span {
+  color: #666;
+  font-size: 12px;
+}
+
+.remote-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+}
+
+.remote-copy-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  margin-top: 8px;
+  border: 1px solid #3a3f4d;
+  background: transparent;
+  color: #a5b4fc;
+  padding: 6px 14px;
+  border-radius: 8px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.remote-copy-btn:hover {
+  background: rgba(99, 102, 241, 0.15);
+}
+
+.remote-err {
+  color: #f87171;
+  font-size: 13px;
+  margin: 0 0 12px;
+}
+
+.remote-tip {
+  margin-top: 4px;
+}
+
+/* 播放历史下拉 */
+.remote-input-wrap {
+  position: relative;
+  margin-bottom: 14px;
+}
+
+.remote-history {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  background: rgba(26, 29, 39, 0.98);
+  border: 1px solid #3a3f4d;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  z-index: 10;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.remote-history-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  font-size: 12px;
+  color: #888;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.remote-history-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: background 0.1s;
+}
+
+.remote-history-item:hover {
+  background: rgba(99, 102, 241, 0.12);
+}
+
+.remote-history-url {
+  flex: 1;
+  min-width: 0;
+  color: #eaeaea;
+  word-break: break-all;
+}
+
+.remote-history-del {
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  color: #6b7280;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+}
+
+.remote-history-del:hover {
+  color: #f87171;
+  background: rgba(248, 113, 113, 0.15);
 }
 
 /* ===== Toast 通知 ===== */

@@ -81,7 +81,7 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
 }
 
 /// 获取本机局域网 IP
-fn local_ip() -> String {
+pub fn local_ip() -> String {
     let socket = UdpSocket::bind("0.0.0.0:0").ok();
     if let Some(s) = socket {
         if s.connect("8.8.8.8:80").is_ok() {

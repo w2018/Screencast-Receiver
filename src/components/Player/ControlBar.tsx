@@ -1,4 +1,4 @@
-// 播放控制栏：播放/暂停、进度、音量、倍速、全屏、镜像、设置
+// 播放控制栏：播放/暂停、进度、音量、倍速、全屏、镜像、设置、网络视频
 import { useState } from "react";
 import {
   Play,
@@ -14,6 +14,7 @@ import {
   FlipHorizontal2,
   FlipVertical2,
   Square,
+  Globe,
 } from "lucide-react";
 import { usePlayerStore } from "../../stores/playerStore";
 import { useSettingsStore } from "../../stores/settingsStore";
@@ -22,6 +23,7 @@ import { destroy } from "tauri-plugin-libmpv-api";
 import { invoke } from "@tauri-apps/api/core";
 import { ProgressBar } from "./ProgressBar";
 import { VolumeSlider } from "./VolumeSlider";
+import { RemotePlayDialog } from "../Dialog/RemotePlayDialog";
 
 // 可选倍速档位
 const SPEED_OPTIONS = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
@@ -63,6 +65,7 @@ export function ControlBar({
   } = usePlayerStore();
 
   const [speedOpen, setSpeedOpen] = useState(false);
+  const [remoteOpen, setRemoteOpen] = useState(false);
 
   const isPlaying = status === "playing";
 
@@ -209,6 +212,15 @@ export function ControlBar({
           <FlipVertical2 size={18} />
         </button>
 
+        {/* 网络视频播放 */}
+        <button
+          className="ctrl-btn"
+          title="网络视频播放（本机输入 URL / 扫码远程控制）"
+          onClick={() => setRemoteOpen(true)}
+        >
+          <Globe size={18} />
+        </button>
+
         {/* 设置 */}
         <button className="ctrl-btn" title="设置" onClick={onOpenSettings}>
           <Settings size={18} />
@@ -219,6 +231,9 @@ export function ControlBar({
           {isFullscreen ? <Minimize size={18} /> : <Maximize size={18} />}
         </button>
       </div>
+
+      {/* 网络视频播放弹窗 */}
+      <RemotePlayDialog open={remoteOpen} onClose={() => setRemoteOpen(false)} />
     </div>
   );
 }
