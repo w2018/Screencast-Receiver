@@ -7,6 +7,7 @@ import {
   SkipForward,
   RotateCcw,
   RotateCw,
+  RefreshCw,
   Maximize,
   Minimize,
   Settings,
@@ -15,6 +16,7 @@ import {
   Square,
 } from "lucide-react";
 import { usePlayerStore } from "../../stores/playerStore";
+import { loadFile } from "../../lib/mpv";
 import { ProgressBar } from "./ProgressBar";
 import { VolumeSlider } from "./VolumeSlider";
 
@@ -61,6 +63,19 @@ export function ControlBar({
 
   const isPlaying = status === "playing";
 
+  // 刷新：重新加载当前播放内容
+  const refreshPlayback = async () => {
+    const st = usePlayerStore.getState();
+    const url = st.currentUrl || st.filename;
+    if (!url) return;
+    usePlayerStore.setState({ loading: true, error: null, status: "loading" });
+    try {
+      await loadFile(url);
+    } catch (e) {
+      usePlayerStore.setState({ error: String(e), status: "error" });
+    }
+  };
+
   return (
     <div className="control-bar" onClick={(e) => e.stopPropagation()}>
       <ProgressBar position={position} duration={duration} onSeek={seekTo} />
@@ -96,6 +111,15 @@ export function ControlBar({
         {/* 停止（结束投屏） */}
         <button className="ctrl-btn" title="停止并结束投屏" onClick={onStop}>
           <Square size={18} fill="currentColor" />
+        </button>
+
+        {/* 刷新（重新加载当前播放） */}
+        <button
+          className="ctrl-btn"
+          title="刷新（重新加载当前播放）"
+          onClick={refreshPlayback}
+        >
+          <RefreshCw size={18} />
         </button>
 
         {/* 音量 */}

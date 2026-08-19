@@ -47,6 +47,12 @@ pub fn get_setting(state: State<Db>, key: String) -> Result<Option<String>, Stri
     db::get_setting(&state, &key)
 }
 
+/// 根据投屏 URL 恢复防盗链请求头（托盘恢复播放时 mpv 实例重建，Referer 会丢失）
+#[tauri::command]
+pub fn setup_stream_headers_command(app: tauri::AppHandle, uri: String) {
+    crate::dlna_renderer::setup_stream_headers(&app, &uri);
+}
+
 /// 获取 DLNA 服务当前绑定的 IP 和端口（设置界面显示）
 #[tauri::command]
 pub fn get_dlna_status(state: State<DlnaStatusState>) -> Result<Option<DlnaStatus>, String> {

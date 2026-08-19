@@ -14,6 +14,7 @@ import {
   setVideoFilter,
   getVideoFilter,
   loadFile,
+  seekAbsolute,
   setVolume as mpvSetVolume,
   setSpeed as mpvSetSpeed,
   setLoop as mpvSetLoop,
@@ -63,7 +64,6 @@ function App() {
   const setBuffering = usePlayerStore((s) => s.setBuffering);
   const setError = usePlayerStore((s) => s.setError);
   const setStatus = usePlayerStore((s) => s.setStatus);
-  const loadAndPlay = usePlayerStore((s) => s.loadAndPlay);
 
   const appWindow = getCurrentWindow();
 
@@ -119,20 +119,35 @@ function App() {
     let unlisten: (() => void) | undefined;
     let unlistenTray: (() => void) | undefined;
     let unlistenTrayHidden: (() => void) | undefined;
+    let unlistenTrayResized: (() => void) | undefined;
     let unlistenDlna: (() => void) | undefined;
     let saveTimer: number | undefined;
     let disposed = false;
 
     // 重新初始化 MPV 并恢复播放（从托盘恢复窗口时调用）
+    // 实例隐藏时会被销毁，恢复时需重建实例 + 防盗链头 + 续播原位置
     const reinitAndPlay = async () => {
       try {
         await initMpv(); // 幂等：实例已存在则跳过
         flog("MPV 已重新初始化（托盘恢复）");
         const st = usePlayerStore.getState();
-        // 恢复之前播放的视频
-        if (st.filename && st.status !== "playing") {
-          await loadAndPlay(st.filename);
+        const url = st.currentUrl || st.filename;
+        if (!url) return;
+        // 恢复防盗链请求头（B 站等 CDN 校验 Referer，缺少会 403）
+        try {
+          await invoke("setup_stream_headers_command", { uri: url });
+        } catch (e) {
+          flog(`恢复请求头失败: ${String(e)}`);
         }
+        // 静默续播：从内存中记录的位置恢复，不弹确认框
+        const resume = st.position > 5 ? st.position : 0;
+        setStatus("loading");
+        await loadFile(url);
+        if (resume > 0) {
+          await seekAbsolute(resume);
+          setPosition(resume);
+        }
+        flog(`已恢复播放: ${url} @ ${resume}s`);
       } catch (e) {
         setError(`MPV 重新初始化失败: ${String(e)}`);
         flog(`MPV reinit 失败: ${String(e)}`);
@@ -284,12 +299,30 @@ function App() {
       unlistenTrayHidden = un;
     });
 
+    // 最小化时若开启"最小化到托盘时暂停播放"：隐藏到托盘并暂停
+    const unlistenResized = appWindow.onResized(async () => {
+      if (!useSettingsStore.getState().pauseOnMinimize) return;
+      const minimized = await appWindow.isMinimized();
+      if (!minimized) return;
+      await appWindow.hide();
+      flog("[F8] 最小化 → 已隐藏到托盘");
+      const ps = usePlayerStore.getState();
+      if (ps.status === "playing") {
+        ps.togglePlayPause();
+        flog("[F8] 已按设置暂停播放");
+      }
+    });
+    unlistenResized.then((un) => {
+      unlistenTrayResized = un;
+    });
+
     return () => {
       disposed = true;
       if (saveTimer) window.clearInterval(saveTimer);
       unlisten?.();
       unlistenTray?.();
       unlistenTrayHidden?.();
+      unlistenTrayResized?.();
       unlistenDlna?.();
       destroy().catch(() => {});
     };

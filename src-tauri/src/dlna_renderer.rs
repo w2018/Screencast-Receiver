@@ -223,7 +223,7 @@ fn mpv_get(app: &AppHandle, name: &str, format: &str) -> serde_json::Value {
 
 /// 根据投屏 URL 的域名判断来源，设置 mpv 请求头（防盗链 Referer + 浏览器 UA）。
 /// 视频平台（B 站/爱奇艺等）的 CDN 会校验 Referer，缺少时返回 403 → 播放器报"网络异常"。
-fn setup_stream_headers(app: &AppHandle, uri: &str) {
+pub fn setup_stream_headers(app: &AppHandle, uri: &str) {
     let host = uri
         .split("://")
         .nth(1)

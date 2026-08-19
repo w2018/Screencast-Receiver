@@ -42,6 +42,7 @@ pub fn run() {
             commands::list_progress,
             commands::set_setting,
             commands::get_setting,
+            commands::setup_stream_headers_command,
             commands::get_dlna_status,
             commands::get_firewall_command,
             commands::check_firewall_rule,

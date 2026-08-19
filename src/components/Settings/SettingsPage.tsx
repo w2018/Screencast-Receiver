@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-import { X, RotateCcw, Copy, MonitorPlay, User } from "lucide-react";
+import { X, RotateCcw, Copy, MonitorPlay } from "lucide-react";
 import {
   useSettingsStore,
   DEFAULT_SHORTCUTS,
@@ -438,25 +438,9 @@ export function SettingsPage({ onClose }: SettingsPageProps) {
               <MonitorPlay size={36} />
             </div>
             <div className="about-name">投屏助手</div>
-            <div className="about-version">版本 v{appVersion || "1.1.0"}</div>
-            <div className="about-author">
-              <User size={13} /> 作者：曾先生
-            </div>
-            <div className="about-divider" />
+            <div className="about-version">版本 v{appVersion || "1.2.1"}</div>
             <div className="about-desc">
               基于 Tauri 2 + libmpv 内核的 Windows 桌面 DLNA 投屏接收端，接收手机/设备的投屏并自动播放。
-            </div>
-            <ul className="about-features">
-              <li>DLNA 投屏接收：微信 / 爱奇艺 / B 站 / 腾讯视频等 App 一键投屏</li>
-              <li>投屏授权确认：收到请求弹窗，显示设备与视频信息，允许 / 拒绝</li>
-              <li>MPV 内核播放：本地文件 / HTTP / HLS / RTSP 网络流</li>
-              <li>播放控制：播放 / 暂停 / 进度 / 倍速 / 音量 / 镜像翻转</li>
-              <li>系统托盘常驻：关闭最小化到托盘，投屏请求自动唤醒</li>
-              <li>进度记忆：自动记忆播放进度，重新打开可续播</li>
-              <li>自定义快捷键：窗口快捷键 + 全局快捷键</li>
-            </ul>
-            <div className="about-footer">
-              MIT License · Windows 平台
             </div>
           </div>
         )}
