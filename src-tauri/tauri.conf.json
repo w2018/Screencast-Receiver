@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "鎶曞睆鍔╂墜",
+  "productName": "投屏助手",
   "version": "1.2.3",
   "identifier": "com.screencastreceiver.app",
   "build": {
@@ -25,7 +25,9 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
+    "targets": [
+      "nsis"
+    ],
     "resources": {
       "lib/libmpv-2.dll": "lib/libmpv-2.dll",
       "lib/libmpv-wrapper.dll": "lib/libmpv-wrapper.dll"
@@ -33,7 +35,10 @@
     "windows": {
       "nsis": {
         "installMode": "currentUser",
-        "languages": ["SimpChinese", "English"],
+        "languages": [
+          "SimpChinese",
+          "English"
+        ],
         "displayLanguageSelector": true
       }
     },
