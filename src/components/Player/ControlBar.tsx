@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { usePlayerStore } from "../../stores/playerStore";
 import { loadFile } from "../../lib/mpv";
+import { invoke } from "@tauri-apps/api/core";
 import { ProgressBar } from "./ProgressBar";
 import { VolumeSlider } from "./VolumeSlider";
 
@@ -70,10 +71,24 @@ export function ControlBar({
     if (!url) return;
     usePlayerStore.setState({ loading: true, error: null, status: "loading" });
     try {
+      // 恢复防盗链请求头（B 站等 CDN 校验 Referer，缺少时刷新会 403）
+      await invoke("setup_stream_headers_command", { uri: url });
       await loadFile(url);
     } catch (e) {
-      usePlayerStore.setState({ error: String(e), status: "error" });
+      usePlayerStore.setState({ loading: false, error: String(e), status: "error" });
+      return;
     }
+    // 超时保护：10 秒内未收到加载成功事件（缓冲中/地址失效）则提示，避免无限转圈
+    window.setTimeout(() => {
+      const s = usePlayerStore.getState();
+      if (s.status === "loading") {
+        usePlayerStore.setState({
+          loading: false,
+          status: "error",
+          error: "刷新超时，视频源可能已失效，请停止后重新投屏",
+        });
+      }
+    }, 10000);
   };
 
   return (
