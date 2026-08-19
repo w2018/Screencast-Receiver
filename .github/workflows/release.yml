@@ -47,9 +47,15 @@ jobs:
           $pkg = Get-Content package.json | ConvertFrom-Json
           $tag = "${{ github.ref_name }}"
           echo "version=$tag" >> $env:GITHUB_OUTPUT
-          $exeName = "投屏助手_$($tag)_x64-setup.exe"
+          $exeName = "ScreencastReceiver_$($tag)_x64-setup.exe"
           echo "exeName=$exeName" >> $env:GITHUB_OUTPUT
           Write-Output "version=$tag exeName=$exeName"
+
+      # 安装包重命名为 ASCII 文件名（避免中文文件名在 Release 上传时被截断）
+      - name: Rename installer
+        shell: bash
+        run: |
+          mv src-tauri/target/release/bundle/nsis/*_x64-setup.exe src-tauri/target/release/bundle/nsis/${{ steps.version.outputs.exeName }}
 
       # 创建 GitHub Release 并上传所有附件
       - name: Create Release
@@ -61,8 +67,9 @@ jobs:
             ## 投屏助手 ${{ github.ref_name }}
 
             Windows 桌面投屏接收端（DLNA），MPV 内核。
-            - **安装包**：`投屏助手_${{ github.ref_name }}_x64-setup.exe`
+            - **安装包**：`${{ steps.version.outputs.exeName }}`
           files: |
             src-tauri/target/release/bundle/nsis/*_x64-setup.exe
+          overwrite_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
