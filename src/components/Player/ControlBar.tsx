@@ -16,7 +16,9 @@ import {
   Square,
 } from "lucide-react";
 import { usePlayerStore } from "../../stores/playerStore";
-import { loadFile } from "../../lib/mpv";
+import { useSettingsStore } from "../../stores/settingsStore";
+import { initMpv, loadFile } from "../../lib/mpv";
+import { destroy } from "tauri-plugin-libmpv-api";
 import { invoke } from "@tauri-apps/api/core";
 import { ProgressBar } from "./ProgressBar";
 import { VolumeSlider } from "./VolumeSlider";
@@ -69,16 +71,32 @@ export function ControlBar({
     const st = usePlayerStore.getState();
     const url = st.currentUrl || st.filename;
     if (!url) return;
-    usePlayerStore.setState({ loading: true, error: null, status: "loading" });
+    // 手动刷新：禁用自动重连 + 清除缓冲标志，避免失败后无限转圈
+    usePlayerStore.setState({
+      loading: true,
+      error: null,
+      status: "loading",
+      buffering: false,
+      allowAutoRetry: false,
+    });
     try {
       // 恢复防盗链请求头（B 站等 CDN 校验 Referer，缺少时刷新会 403）
       await invoke("setup_stream_headers_command", { uri: url });
+      // 同一实例重复 loadfile 会失效，必须销毁后重建实例再加载
+      await destroy();
+      const s = useSettingsStore.getState();
+      await initMpv({
+        hwdec: s.hardwareDecode ? "d3d11va" : "no",
+        "cache-secs": String(s.networkCacheSecs),
+      });
       await loadFile(url);
+      // 成功提交后由 file-loaded 事件清 loading/buffering；这里仅兜底
+      usePlayerStore.setState({ loading: false });
     } catch (e) {
-      usePlayerStore.setState({ loading: false, error: String(e), status: "error" });
+      usePlayerStore.setState({ loading: false, error: String(e), status: "error", buffering: false });
       return;
     }
-    // 超时保护：10 秒内未收到加载成功事件（缓冲中/地址失效）则提示，避免无限转圈
+    // 超时保护：10 秒内未收到加载成功事件（地址失效/网络卡住）则提示，避免无限转圈
     window.setTimeout(() => {
       const s = usePlayerStore.getState();
       if (s.status === "loading") {
@@ -86,6 +104,7 @@ export function ControlBar({
           loading: false,
           status: "error",
           error: "刷新超时，视频源可能已失效，请停止后重新投屏",
+          buffering: false,
         });
       }
     }, 10000);

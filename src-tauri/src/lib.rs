@@ -5,6 +5,7 @@ mod dlna_renderer;
 mod tray;
 
 use tauri::{Emitter, Manager};
+use tauri_plugin_libmpv::MpvExt;
 
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -98,9 +99,16 @@ pub fn run() {
                     return; // 不拦截，窗口真正关闭
                 }
                 println!("[TRAY] 收到关闭请求，隐藏到托盘");
+                // 隐藏前查询 mpv 实时播放位置（实例销毁后 time-pos 会归零，前端拿不到真值）
+                let saved_pos: Option<f64> = app
+                    .mpv()
+                    .get_property("time-pos".to_string(), "double".to_string(), "main")
+                    .ok()
+                    .and_then(|v| v.as_f64());
+                println!("[TRAY] 隐藏前 mpv time-pos = {:?}", saved_pos);
                 let _ = window.hide();
                 println!("[TRAY] hide 调用完成, 可见={}", window.is_visible().unwrap_or(false));
-                let _ = app.emit("app-hidden", ());
+                let _ = app.emit("app-hidden", saved_pos.unwrap_or(0.0));
                 api.prevent_close();
             }
         })

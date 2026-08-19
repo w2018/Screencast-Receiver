@@ -1,6 +1,8 @@
 // 自定义标题栏（F10）：无系统边框时提供拖拽区 + 窗口控制按钮
 import { Minus, Square, X, MonitorPlay } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { useSettingsStore } from "../../stores/settingsStore";
+import { usePlayerStore } from "../../stores/playerStore";
 
 interface TitleBarProps {
   /** 是否可见（3 秒无操作自动隐藏） */
@@ -9,6 +11,22 @@ interface TitleBarProps {
 
 export function TitleBar({ visible = true }: TitleBarProps) {
   const appWindow = getCurrentWindow();
+
+  // 关闭：开启"关闭到托盘"时仅隐藏窗口（不触发 CloseRequested，
+  // 插件不会销毁 mpv 实例，恢复时零重载直接续显）；否则正常退出
+  const handleClose = async () => {
+    if (useSettingsStore.getState().minimizeToTray) {
+      await appWindow.hide();
+      if (useSettingsStore.getState().pauseOnMinimize) {
+        const ps = usePlayerStore.getState();
+        if (ps.status === "playing") {
+          ps.togglePlayPause();
+        }
+      }
+    } else {
+      await appWindow.close();
+    }
+  };
 
   return (
     <div
@@ -36,11 +54,7 @@ export function TitleBar({ visible = true }: TitleBarProps) {
         >
           <Square size={12} />
         </button>
-        <button
-          className="tb-btn tb-close"
-          title="关闭"
-          onClick={() => appWindow.close()}
-        >
+        <button className="tb-btn tb-close" title="关闭" onClick={handleClose}>
           <X size={15} />
         </button>
       </div>

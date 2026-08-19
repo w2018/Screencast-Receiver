@@ -169,6 +169,36 @@ body,
   background: rgba(99, 102, 241, 0.4);
 }
 
+/* ===== 播放结束提示 ===== */
+.ended-overlay {
+  background: rgba(0, 0, 0, 0.55);
+  pointer-events: auto;
+}
+
+.ended-text {
+  color: #eaeaea;
+  font-size: 18px;
+  letter-spacing: 1px;
+}
+
+.replay-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid #6366f1;
+  background: rgba(99, 102, 241, 0.2);
+  color: #fff;
+  padding: 10px 26px;
+  border-radius: 8px;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.replay-btn:hover {
+  background: rgba(99, 102, 241, 0.4);
+}
+
 /* ===== 播放控制栏 ===== */
 .control-bar {
   position: absolute;

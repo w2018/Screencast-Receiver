@@ -54,6 +54,8 @@ interface PlayerState {
   error: string | null;
   /** 是否加载中 */
   loading: boolean;
+  /** 是否允许 end-file 错误后自动重连（刷新等手动操作时禁用，避免无限重连转圈） */
+  allowAutoRetry: boolean;
 
   // 动作
   setStatus: (status: PlaybackStatus) => void;
@@ -107,6 +109,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   buffering: false,
   error: null,
   loading: false,
+  allowAutoRetry: true,
 
   setStatus: (status) => set({ status }),
   setPosition: (pos) => set({ position: pos }),
@@ -124,7 +127,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       videoHeight: typeof h === "number" && h > 0 ? h : s.videoHeight,
     })),
   setBuffering: (buffering) => set({ buffering }),
-  setError: (error) => set({ error, status: error ? "error" : get().status }),
+  setError: (error) =>
+    set({ error, status: error ? "error" : get().status, buffering: false }),
   setLoading: (loading) => set({ loading }),
 
   loadAndPlay: async (url) => {
@@ -155,6 +159,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       filename: url,
       currentUrl: url,
       position: 0,
+      buffering: false,
+      allowAutoRetry: true,
     });
     try {
       await loadFile(url);
@@ -185,6 +191,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         duration: 0,
         filename: null,
         error: null,
+        buffering: false,
+        loading: false,
       });
     } catch (e) {
       set({ error: String(e) });

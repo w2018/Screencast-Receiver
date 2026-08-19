@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-import { X, RotateCcw, Copy, MonitorPlay } from "lucide-react";
+import { X, RotateCcw, Copy, MonitorPlay, User } from "lucide-react";
 import {
   useSettingsStore,
   DEFAULT_SHORTCUTS,
@@ -439,6 +439,9 @@ export function SettingsPage({ onClose }: SettingsPageProps) {
             </div>
             <div className="about-name">投屏助手</div>
             <div className="about-version">版本 v{appVersion || "1.2.1"}</div>
+            <div className="about-author">
+              <User size={13} /> 作者：曾先生
+            </div>
             <div className="about-desc">
               基于 Tauri 2 + libmpv 内核的 Windows 桌面 DLNA 投屏接收端，接收手机/设备的投屏并自动播放。
             </div>

@@ -15,6 +15,8 @@ import {
   getVideoFilter,
   loadFile,
   seekAbsolute,
+  play,
+  getTimePos,
   setVolume as mpvSetVolume,
   setSpeed as mpvSetSpeed,
   setLoop as mpvSetLoop,
@@ -51,6 +53,10 @@ function App() {
   const hideTimer = useRef<number | null>(null);
   // 网络错误重连计数（F11）
   const retryRef = useRef<{ count: number; url: string }>({ count: 0, url: "" });
+  // 待恢复的播放位置（托盘恢复时 set，file-loaded 后执行 seek）
+  const pendingSeekRef = useRef(0);
+  // 隐藏到托盘瞬间保存的位置（实例销毁/事件归零前抓取）
+  const lastPosRef = useRef(0);
 
   // Zustand store 动作
   const setPaused = usePlayerStore((s) => s.setPaused);
@@ -133,20 +139,19 @@ function App() {
         const st = usePlayerStore.getState();
         const url = st.currentUrl || st.filename;
         if (!url) return;
+        usePlayerStore.setState({ allowAutoRetry: true });
         // 恢复防盗链请求头（B 站等 CDN 校验 Referer，缺少会 403）
         try {
           await invoke("setup_stream_headers_command", { uri: url });
         } catch (e) {
           flog(`恢复请求头失败: ${String(e)}`);
         }
-        // 静默续播：从内存中记录的位置恢复，不弹确认框
-        const resume = st.position > 5 ? st.position : 0;
+        // 静默续播：优先用隐藏瞬间保存的位置（实例销毁/事件归零后 store 可能已丢失），
+        // 位置存入 pendingSeek，待 file-loaded 后 seek（立即 seek 会因文件未加载而无效）
+        const resume = lastPosRef.current > 5 ? lastPosRef.current : st.position > 5 ? st.position : 0;
+        pendingSeekRef.current = resume;
         setStatus("loading");
         await loadFile(url);
-        if (resume > 0) {
-          await seekAbsolute(resume);
-          setPosition(resume);
-        }
         flog(`已恢复播放: ${url} @ ${resume}s`);
       } catch (e) {
         setError(`MPV 重新初始化失败: ${String(e)}`);
@@ -176,6 +181,20 @@ function App() {
               break;
             case "file-loaded":
               setStatus("playing");
+              // 清除加载/缓冲标志（刷新/恢复后可能残留，导致转圈不消失）
+              setBuffering(false);
+              usePlayerStore.setState({ loading: false });
+              // 托盘恢复续播：mpv 就绪后 seek 到暂停前位置
+              if (pendingSeekRef.current > 0) {
+                const target = pendingSeekRef.current;
+                pendingSeekRef.current = 0;
+                seekAbsolute(target)
+                  .then(() => {
+                    setPosition(target);
+                    flog(`[F8] 已续播到 ${target}s`);
+                  })
+                  .catch((e) => flog(`[F8] 续播 seek 失败: ${String(e)}`));
+              }
               // 应用播放设置（默认音量/倍速/循环）
               {
                 const ps = useSettingsStore.getState();
@@ -187,6 +206,14 @@ function App() {
               break;
             case "end-file":
               if (event.reason === "error") {
+                // 刷新等手动操作时禁用自动重连，避免长时间转圈（直接提示）
+                if (!usePlayerStore.getState().allowAutoRetry) {
+                  setError("加载失败，视频源可能已失效，请停止后重新投屏");
+                  setBuffering(false);
+                  retryRef.current = { count: 0, url: "" };
+                  flog("[F11] 手动刷新模式，不自动重连");
+                  break;
+                }
                 // 网络/解码错误：自动重连（最多 3 次，间隔 2s/4s/8s）
                 const errUrl =
                   usePlayerStore.getState().currentUrl ||
@@ -215,12 +242,24 @@ function App() {
                   retryRef.current = { count: 0, url: "" };
                 }
               } else if (event.reason === "eof") {
-                setStatus("idle");
-                setPosition(0);
-                // 播放完成，清除进度记忆（F7）
-                const doneUrl = usePlayerStore.getState().filename;
-                if (doneUrl) usePlayerStore.getState().clearProgress(doneUrl);
-                flog("[F7] 播放完成，进度已清除");
+                const loop = useSettingsStore.getState().loopPlayback;
+                if (loop) {
+                  // 循环播放：seek(0)+play 重播。
+                  // 说明：INITIAL_OPTIONS 的 keep-open=yes 与 loop-file=inf 冲突（keep-open 优先），
+                  // 故不用 loop-file，改由事件驱动重播。
+                  setPosition(0);
+                  seekAbsolute(0)
+                    .then(() => play())
+                    .catch((e) => flog(`循环重播失败: ${String(e)}`));
+                  flog("[F8] 循环播放: 已从头重播");
+                } else {
+                  setStatus("idle");
+                  setPosition(0);
+                  // 播放完成，清除进度记忆（F7）
+                  const doneUrl = usePlayerStore.getState().filename;
+                  if (doneUrl) usePlayerStore.getState().clearProgress(doneUrl);
+                  flog("[F7] 播放完成，进度已清除");
+                }
               }
               break;
             case "video-reconfig":
@@ -251,9 +290,27 @@ function App() {
       }
     })();
 
-    // 监听托盘"显示主窗口"事件 → 重新初始化 MPV
-    listen("tray-show", () => {
+    // 监听托盘"显示主窗口"事件
+    listen("tray-show", async () => {
       flog("收到托盘显示事件");
+      const st = usePlayerStore.getState();
+      const url = st.currentUrl || st.filename;
+      if (!url) {
+        flog("[F8] 托盘恢复: 无播放内容");
+        return;
+      }
+      // 标题栏关闭（关闭到托盘）只隐藏窗口、不销毁 mpv 实例：
+      // 实例存活时直接恢复显示，无需重载（画面/进度/暂停状态原样回来）
+      try {
+        const pos = await getTimePos();
+        if (pos !== null && Number.isFinite(pos)) {
+          flog(`[F8] 托盘恢复: 实例存活(time-pos=${pos}s)，无需重载`);
+          return;
+        }
+        flog("[F8] 托盘恢复: time-pos 无效，走重载续播");
+      } catch {
+        flog("[F8] 托盘恢复: 实例已销毁，重载续播");
+      }
       reinitAndPlay();
     }).then((un) => {
       unlistenTray = un;
@@ -287,7 +344,18 @@ function App() {
     });
 
     // 窗口隐藏到托盘：按设置暂停播放
-    listen("app-hidden", () => {
+    listen("app-hidden", (e) => {
+      // Rust 端在隐藏前查询的真值；无效/0 时不覆盖（避免实例销毁后位置归零污染）
+      const payloadPos =
+        typeof e.payload === "number" && Number.isFinite(e.payload) ? e.payload : 0;
+      if (payloadPos > 0) {
+        lastPosRef.current = payloadPos;
+        flog(`[F8] 隐藏托盘, 已保存位置 ${payloadPos}s`);
+      } else {
+        const sp = usePlayerStore.getState().position;
+        if (sp > 0) lastPosRef.current = sp;
+        flog(`[F8] 隐藏托盘, 保存位置 ${sp}s`);
+      }
       if (useSettingsStore.getState().pauseOnMinimize) {
         const ps = usePlayerStore.getState();
         if (ps.status === "playing") {
@@ -304,6 +372,9 @@ function App() {
       if (!useSettingsStore.getState().pauseOnMinimize) return;
       const minimized = await appWindow.isMinimized();
       if (!minimized) return;
+      // 隐藏前保存位置（实例销毁可能触发事件归零）
+      lastPosRef.current = usePlayerStore.getState().position;
+      flog(`[F8] 最小化, 已保存位置 ${lastPosRef.current}s`);
       await appWindow.hide();
       flog("[F8] 最小化 → 已隐藏到托盘");
       const ps = usePlayerStore.getState();
@@ -376,9 +447,13 @@ function App() {
         }
         break;
       }
-      case "filename":
-        setFilename(typeof data === "string" ? data : null);
+      case "filename": {
+        const name = typeof data === "string" ? data : null;
+        // 加载了新文件：重置"隐藏前保存的位置"（新视频从头计）
+        if (name !== usePlayerStore.getState().filename) lastPosRef.current = 0;
+        setFilename(name);
         break;
+      }
       case "cache-buffering-state": {
         const v = Number(data);
         setBuffering(v === 1);
@@ -493,10 +568,12 @@ function App() {
         onDoubleClick={toggleFullscreen}
         onMouseMove={handleMouseMove}
         onRetry={() => {
-          // 手动重试：重置计数并重新加载
+          // 手动重试：重置计数并重新加载（允许自动重连）
           const url = usePlayerStore.getState().filename;
           retryRef.current = { count: 0, url: "" };
+          usePlayerStore.setState({ allowAutoRetry: true });
           setError(null);
+          setBuffering(false);
           if (url) {
             flog("[F11] 手动重试");
             loadFile(url).catch((e) => flog(`[F11] 重试失败: ${String(e)}`));
