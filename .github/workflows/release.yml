@@ -59,10 +59,7 @@ jobs:
 
             Windows 桌面投屏接收端（DLNA），MPV 内核。
             - **安装包**：`投屏助手_${{ github.ref_name }}_x64-setup.exe`
-            - **附件**：libmpv-2.dll 与 libmpv-wrapper.dll
           files: |
             src-tauri/target/release/bundle/nsis/*_x64-setup.exe
-            src-tauri/lib/libmpv-2.dll
-            src-tauri/lib/libmpv-wrapper.dll
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
