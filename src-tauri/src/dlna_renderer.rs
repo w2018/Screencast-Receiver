@@ -42,6 +42,44 @@ pub struct DlnaStatusState(pub Mutex<Option<DlnaStatus>>);
 
 // ===== 工具函数 =====
 
+/// 生成 RFC 1123 格式的 HTTP DATE 头值（UPnP 规范要求 SSDP 消息携带 DATE）
+fn http_date() -> String {
+    const DAYS: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    const MONTHS: [&str; 12] = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let days = secs.div_euclid(86400);
+    let wday = ((days + 4).rem_euclid(7)) as usize;
+    let (y, m, d) = civil_from_days(days);
+    let (h, mi, s) = (
+        secs.rem_euclid(86400) / 3600,
+        secs.rem_euclid(3600) / 60,
+        secs.rem_euclid(60),
+    );
+    format!(
+        "{}, {:02} {} {} {:02}:{:02}:{:02} GMT",
+        DAYS[wday], d, MONTHS[(m - 1) as usize], y, h, mi, s
+    )
+}
+
+/// 儒略日 → (年, 月, 日)（Howard Hinnant 算法）
+fn civil_from_days(z: i64) -> (i64, u32, u32) {
+    let z = z + 719468;
+    let era = (if z >= 0 { z } else { z - 146096 }) / 146097;
+    let doe = (z - era * 146097) as u64;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
+    (if m <= 2 { y + 1 } else { y }, m, d)
+}
+
 /// 获取本机局域网 IP
 fn local_ip() -> String {
     let socket = UdpSocket::bind("0.0.0.0:0").ok();
@@ -943,8 +981,12 @@ fn send_alive_all(
     ];
     let notify = |ip: &str, nt: &str, usn: &str| {
         format!(
-            "NOTIFY * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nCACHE-CONTROL: max-age=1800\r\nLOCATION: http://{}:{}/description.xml\r\nNT: {}\r\nNTS: ssdp:alive\r\nSERVER: Windows/10 UPnP/1.0 DLNADOC/1.50 ScreenCastReceiver/1.1\r\nUSN: {}\r\n\r\n",
-            ip, port, nt, usn
+            "NOTIFY * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nCACHE-CONTROL: max-age=1800\r\nDATE: {}\r\nLOCATION: http://{}:{}/description.xml\r\nNT: {}\r\nNTS: ssdp:alive\r\nSERVER: Windows/10 UPnP/1.0 DLNADOC/1.50 ScreenCastReceiver/1.2\r\nUSN: {}\r\nBOOTID.UPNP.ORG: 1\r\nCONFIGID.UPNP.ORG: 1\r\nSEARCHPORT.UPNP.ORG: 1900\r\n\r\n",
+            http_date(),
+            ip,
+            port,
+            nt,
+            usn
         )
     };
     if ifaces.is_empty() {
@@ -970,6 +1012,8 @@ fn send_alive_all(
 
 /// 通过所有接口响应 M-SEARCH：LOCATION 指向对应接口 IP，
 /// 手机只会接受自己可达网段的响应包；USN 按请求 ST 类型生成（rootdevice/uuid/设备类型）
+/// 按 UPnP 1.0/1.1 标准携带 DATE/EXT/BOOTID 等头；对 ssdp:all 搜索发多个类型响应，
+/// 提高各 DLNA App 的兼容性（部分客户端只接受与自身搜索目标一致的 ST 响应）
 fn send_msearch_response(
     ifaces: &[SsdpIfaceSocket],
     fallback: &std::net::UdpSocket,
@@ -979,28 +1023,63 @@ fn send_msearch_response(
     to: &std::net::SocketAddr,
 ) {
     // 按请求 ST 决定 USN 格式（UPnP 1.0 规范）
-    let usn = if st.eq_ignore_ascii_case("upnp:rootdevice") {
-        format!("uuid:{}::upnp:rootdevice", uuid)
-    } else if st.starts_with("uuid:") {
-        st.to_string()
-    } else if st.eq_ignore_ascii_case(DEVICE_TYPE_2) {
-        format!("uuid:{}::{}", uuid, DEVICE_TYPE_2)
-    } else {
-        format!("uuid:{}::{}", uuid, DEVICE_TYPE)
+    let usn = |target: &str| -> String {
+        if target.eq_ignore_ascii_case("upnp:rootdevice") {
+            format!("uuid:{}::upnp:rootdevice", uuid)
+        } else if target.starts_with("uuid:") {
+            target.to_string()
+        } else if target.eq_ignore_ascii_case(DEVICE_TYPE_2) {
+            format!("uuid:{}::{}", uuid, DEVICE_TYPE_2)
+        } else {
+            format!("uuid:{}::{}", uuid, target)
+        }
     };
-    let response = |ip: &str| {
+    let response = |ip: &str, target: &str, usn_v: &str| {
         format!(
-            "HTTP/1.1 200 OK\r\nCACHE-CONTROL: max-age=1800\r\nEXT:\r\nLOCATION: http://{}:{}/description.xml\r\nSERVER: Windows/10 UPnP/1.0 DLNADOC/1.50 ScreenCastReceiver/1.1\r\nST: {}\r\nUSN: {}\r\n\r\n",
-            ip, port, st, usn
+            "HTTP/1.1 200 OK\r\nCACHE-CONTROL: max-age=1800\r\nDATE: {}\r\nEXT:\r\nLOCATION: http://{}:{}/description.xml\r\nSERVER: Windows/10 UPnP/1.0 DLNADOC/1.50 ScreenCastReceiver/1.2\r\nST: {}\r\nUSN: {}\r\nBOOTID.UPNP.ORG: 1\r\nCONFIGID.UPNP.ORG: 1\r\nSEARCHPORT.UPNP.ORG: 1900\r\n\r\n",
+            http_date(),
+            ip,
+            port,
+            target,
+            usn_v
         )
+    };
+    // ssdp:all 搜索：广播本设备所有类型（rootdevice / MediaRenderer:1 / MediaRenderer:2 / uuid）
+    let targets: Vec<(String, String)> = if st.eq_ignore_ascii_case("ssdp:all") {
+        vec![
+            ("upnp:rootdevice".to_string(), usn("upnp:rootdevice")),
+            (DEVICE_TYPE.to_string(), usn(DEVICE_TYPE)),
+            (DEVICE_TYPE_2.to_string(), usn(DEVICE_TYPE_2)),
+            (format!("uuid:{}", uuid), format!("uuid:{}", uuid)),
+        ]
+    } else {
+        vec![(st.to_string(), usn(st))]
+    };
+    let send_one = |ip: &str, t: &str, u: &str| {
+        let _ = if ifaces.is_empty() {
+            fallback.send_to(response(ip, t, u).as_bytes(), to)
+        } else {
+            // 找到对应接口的发送 socket（同 ip），找不到则用 fallback
+            let s = ifaces.iter().find(|s| s.ip.to_string() == ip);
+            match s {
+                Some(s) => s.sock.send_to(response(ip, t, u).as_bytes(), to),
+                None => fallback.send_to(response(ip, t, u).as_bytes(), to),
+            }
+        };
     };
     if ifaces.is_empty() {
         // 兜底：默认路由接口
-        let _ = fallback.send_to(response(&local_ip()).as_bytes(), to);
+        let ip = local_ip();
+        for (t, u) in &targets {
+            send_one(&ip, t, u);
+        }
         return;
     }
     for s in ifaces {
-        let _ = s.sock.send_to(response(&s.ip.to_string()).as_bytes(), to);
+        let ip = s.ip.to_string();
+        for (t, u) in &targets {
+            let _ = s.sock.send_to(response(&ip, t, u).as_bytes(), to);
+        }
     }
 }
 
