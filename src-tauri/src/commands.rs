@@ -1,5 +1,5 @@
 // Tauri commands：数据库操作封装（播放进度 + 设置）
-use tauri::State;
+use tauri::{Manager, State};
 
 use crate::db::{self, Db, ProgressInfo};
 use crate::dlna_renderer::{DlnaStatus, DlnaStatusState};
@@ -36,9 +36,48 @@ pub fn list_progress(state: State<Db>) -> Result<Vec<ProgressInfo>, String> {
 }
 
 /// 写入设置值
+/// 注意：DLNA 相关设置（dlnaEnabled / deviceName / dlnaIface）保存后立即动态应用
+/// （重启 DLNA 服务：关闭开关 → 设备下线；改名 → byebye 旧名 + 以新名重新宣告）
 #[tauri::command]
-pub fn set_setting(state: State<Db>, key: String, value: String) -> Result<(), String> {
-    db::set_setting(&state, &key, &value)
+pub fn set_setting(
+    app: tauri::AppHandle,
+    state: State<Db>,
+    key: String,
+    value: String,
+) -> Result<(), String> {
+    db::set_setting(&state, &key, &value)?;
+    if matches!(
+        key.as_str(),
+        "dlnaEnabled" | "deviceName" | "dlnaIface"
+    ) {
+        apply_dlna_settings(&app)?;
+    }
+    Ok(())
+}
+
+/// 按数据库最新设置重启 DLNA 服务（开关关闭时不启动）
+fn apply_dlna_settings(app: &tauri::AppHandle) -> Result<(), String> {
+    let db = app.state::<Db>();
+    let enabled = db::get_setting(&db, "dlnaEnabled")
+        .ok()
+        .flatten()
+        .map(|v| v == "true")
+        .unwrap_or(true);
+    let name = db::get_setting(&db, "deviceName")
+        .ok()
+        .flatten()
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| "投屏助手".to_string());
+    let iface = db::get_setting(&db, "dlnaIface")
+        .ok()
+        .flatten()
+        .filter(|v| !v.trim().is_empty());
+    if enabled {
+        crate::dlna_renderer::restart(app.clone(), 1900, name, iface)?;
+    } else {
+        crate::dlna_renderer::stop();
+    }
+    Ok(())
 }
 
 /// 读取设置值

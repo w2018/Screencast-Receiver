@@ -33,6 +33,7 @@ export const SETTING_KEYS = [
   "loopPlayback",
   "dlnaEnabled",
   "deviceName",
+  "dlnaIface",
 ] as const;
 
 export type SettingKey = (typeof SETTING_KEYS)[number];
@@ -59,6 +60,8 @@ interface SettingsState {
   // 网络/DLNA 设置
   dlnaEnabled: boolean;
   deviceName: string;
+  /** 用户指定投屏网卡 IP（空 = 自动选择） */
+  dlnaIface: string;
 
   // 快捷键配置
   shortcuts: ShortcutsConfig;
@@ -99,11 +102,13 @@ const DEFAULTS = {
   loopPlayback: false,
   dlnaEnabled: true,
   deviceName: "投屏助手",
+  dlnaIface: "",
 };
 
 // 数字/布尔值设置项的解析
 function parseValue(key: string, raw: string): string | number | boolean {
-  if (key === "language" || key === "theme" || key === "deviceName") return raw;
+  if (key === "language" || key === "theme" || key === "deviceName" || key === "dlnaIface")
+    return raw;
   if (raw === "true" || raw === "false") return raw === "true";
   const n = Number(raw);
   if (!Number.isNaN(n) && raw.trim() !== "") return n;
@@ -125,6 +130,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   loopPlayback: DEFAULTS.loopPlayback,
   dlnaEnabled: DEFAULTS.dlnaEnabled,
   deviceName: DEFAULTS.deviceName,
+  dlnaIface: DEFAULTS.dlnaIface,
   shortcuts: { ...DEFAULT_SHORTCUTS },
 
   loadSettings: async () => {

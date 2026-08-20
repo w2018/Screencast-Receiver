@@ -84,11 +84,16 @@ export function SettingsPage({ onClose }: SettingsPageProps) {
   const [fwAllowed, setFwAllowed] = useState<boolean | null>(null);
   const [fwBusy, setFwBusy] = useState(false);
   const [appVersion, setAppVersion] = useState("");
+  const [ifaces, setIfaces] = useState<{ name: string; ip: string }[]>([]);
 
   // 查询 DLNA 服务状态（绑定 IP + 端口）
   useEffect(() => {
     invoke<{ ip: string; port: number } | null>("get_dlna_status")
       .then(setDlnaStatus)
+      .catch(() => {});
+    // 获取可用投屏网卡列表
+    invoke<{ name: string; ip: string }[]>("list_dlna_ifaces")
+      .then(setIfaces)
       .catch(() => {});
     // 获取完整防火墙命令
     invoke<string>("get_firewall_command")
@@ -384,6 +389,26 @@ export function SettingsPage({ onClose }: SettingsPageProps) {
                 }}
               />
             </SettingRow>
+            <SettingRow
+              label="投屏网卡"
+              desc="用于 SSDP 宣告与设备地址的网卡（手机必须与该网卡同一局域网）"
+            >
+              <select
+                className="text-input iface-select"
+                value={s.dlnaIface || ""}
+                onChange={(e) => update("dlnaIface", e.target.value)}
+              >
+                <option value="">自动选择（推荐）</option>
+                {ifaces.map((f) => (
+                  <option key={f.ip} value={f.ip}>
+                    {f.name}（{f.ip}）
+                  </option>
+                ))}
+              </select>
+            </SettingRow>
+            {s.dlnaIface && (
+              <div className="setting-note">已指定网卡：{s.dlnaIface}，重启应用后生效。</div>
+            )}
             <div className="setting-note">
               <strong>DLNA 服务状态</strong>：{dlnaStatus
                 ? `已启动，监听 ${dlnaStatus.ip}:${dlnaStatus.port}`

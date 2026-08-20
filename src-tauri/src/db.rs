@@ -204,3 +204,16 @@ pub fn get_setting(db: &Db, key: &str) -> Result<Option<String>, String> {
         .map_err(|e| format!("读取设置失败: {e}"))?;
     Ok(result)
 }
+
+/// 获取或创建持久化设备 UUID（DLNA 设备 UUID 每次安装生成一次，保证客户端缓存稳定）
+pub fn get_or_create_device_uuid(db: &Db) -> Result<String, String> {
+    if let Some(u) = get_setting(db, "dlna_device_uuid")? {
+        if !u.trim().is_empty() {
+            return Ok(u);
+        }
+    }
+    let u = uuid::Uuid::new_v4().to_string();
+    set_setting(db, "dlna_device_uuid", &u)?;
+    println!("[DLNA] 已生成并持久化设备 UUID: {}", u);
+    Ok(u)
+}

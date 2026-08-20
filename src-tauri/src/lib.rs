@@ -49,6 +49,7 @@ pub fn run() {
             commands::get_firewall_command,
             commands::check_firewall_rule,
             commands::add_firewall_rule,
+            dlna_renderer::list_dlna_ifaces,
             remote_play::start_remote_play_server
         ])
         .setup(|app| {
@@ -60,6 +61,9 @@ pub fn run() {
 
             // DLNA 状态存储（供设置界面显示绑定 IP/端口）
             app.manage(dlna_renderer::DlnaStatusState(std::sync::Mutex::new(None)));
+            // DLNA 会话状态（当前投屏 URI）与 GENA 订阅者（重启服务时保持，避免重复 manage）
+            app.manage(dlna_renderer::DlnaSession(std::sync::Mutex::new(String::new())));
+            app.manage(dlna_renderer::EventSubs(std::sync::Mutex::new(Vec::new())));
             // 远程播放 HTTP 服务状态
             app.manage(remote_play::RemoteState(std::sync::Mutex::new(None)));
 
@@ -80,9 +84,18 @@ pub fn run() {
                     .filter(|v| !v.is_empty())
                     .unwrap_or_else(|| "投屏助手".to_string())
             };
+            // 用户指定的投屏网卡 IP（设置页选择；为空 = 自动选择）
+            let dlna_iface = {
+                let db = app.state::<db::Db>();
+                db::get_setting(&db, "dlnaIface")
+                    .ok()
+                    .flatten()
+                    .filter(|v| !v.trim().is_empty())
+            };
             if dlna_enabled {
-                // 端口 0 = 系统随机分配空闲端口（随机监听，非固定）
-                dlna_renderer::start(app.handle().clone(), 0, dlna_name)?;
+                // 固定 TCP 1900 为 DLNA 控制端口（与 UDP 1900 SSDP 发现一致，便于防火墙放行；
+                // 被占用时自动回退随机空闲端口）
+                dlna_renderer::start(app.handle().clone(), 1900, dlna_name, dlna_iface)?;
             } else {
                 println!("[DLNA] 已通过设置禁用");
             }
@@ -91,6 +104,10 @@ pub fn run() {
         })
         .on_window_event(|window, event| {
             // 关闭窗口时最小化到托盘（读取设置：minimizeToTray）
+            if let tauri::WindowEvent::Destroyed = event {
+                // 窗口真正销毁（应用退出）：发送 SSDP byebye 通知 DLNA 控制端设备下线
+                dlna_renderer::send_byebye();
+            }
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 let app = window.app_handle();
                 // 读取"关闭到托盘"设置，若关闭则真正退出

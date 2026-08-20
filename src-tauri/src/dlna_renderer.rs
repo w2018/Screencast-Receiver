@@ -40,6 +40,31 @@ pub struct DlnaStatus {
 /// DLNA 状态存储（Tauri state）
 pub struct DlnaStatusState(pub Mutex<Option<DlnaStatus>>);
 
+/// GENA 事件订阅者（SID + 回调地址），用于 LastChange 事件通知
+#[derive(Clone)]
+pub struct EventSubscriber {
+    pub sid: String,
+    pub callback: String,
+}
+
+/// GENA 订阅状态存储
+pub struct EventSubs(pub Mutex<Vec<EventSubscriber>>);
+
+/// byebye 宣告所需状态（uuid + port + 接口 IP，应用退出时发送 ssdp:byebye）
+static BYEBYE_STATE: std::sync::OnceLock<std::sync::Mutex<Option<(String, u16)>>> =
+    std::sync::OnceLock::new();
+
+/// DLNA 服务运行标志（设置开关动态启停：false 时 ssdp 循环退出并发送 byebye）
+static RUNNING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// HTTP 监听器句柄（停止服务时关闭以结束 accept 循环）
+static HTTP_LISTENER: std::sync::OnceLock<std::sync::Mutex<Option<TcpListener>>> =
+    std::sync::OnceLock::new();
+
+fn byebye_state() -> &'static std::sync::Mutex<Option<(String, u16)>> {
+    BYEBYE_STATE.get_or_init(|| std::sync::Mutex::new(None))
+}
+
 // ===== 工具函数 =====
 
 /// 生成 RFC 1123 格式的 HTTP DATE 头值（UPnP 规范要求 SSDP 消息携带 DATE）
@@ -80,8 +105,30 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
     (if m <= 2 { y + 1 } else { y }, m, d)
 }
 
-/// 获取本机局域网 IP
+/// 获取本机局域网 IP（WLAN 优先，排除 Tailscale/vEthernet 等虚拟网卡）
+/// 兜底：UDP connect 8.8.8.8 走默认路由
 pub fn local_ip() -> String {
+    let mut wired: Option<String> = None;
+    if let Ok(ifaces) = local_ip_address::list_afinet_netifas() {
+        for (name, ip) in ifaces {
+            if let std::net::IpAddr::V4(v4) = ip {
+                if !is_useful_iface(&name, &v4) {
+                    continue;
+                }
+                let n = name.to_lowercase();
+                // 无线网卡优先（手机投屏场景：手机与 PC 通常都连 WiFi）
+                if n.contains("wlan") || n.contains("wireless") || n.contains("wi-fi") || n.contains("无线") {
+                    return v4.to_string();
+                }
+                if wired.is_none() {
+                    wired = Some(v4.to_string());
+                }
+            }
+        }
+    }
+    if let Some(w) = wired {
+        return w;
+    }
     let socket = UdpSocket::bind("0.0.0.0:0").ok();
     if let Some(s) = socket {
         if s.connect("8.8.8.8:80").is_ok() {
@@ -91,6 +138,32 @@ pub fn local_ip() -> String {
         }
     }
     "127.0.0.1".to_string()
+}
+
+/// DLNA 可用网卡（供设置页选择投屏网卡）
+#[derive(Debug, Clone, Serialize)]
+pub struct DlnaIface {
+    pub name: String,
+    pub ip: String,
+}
+
+/// 列出所有可用于 DLNA 投屏的物理网卡（已过滤虚拟网卡/链路本地）
+#[tauri::command]
+pub fn list_dlna_ifaces() -> Result<Vec<DlnaIface>, String> {
+    let mut list = Vec::new();
+    if let Ok(ifaces) = local_ip_address::list_afinet_netifas() {
+        for (name, ip) in ifaces {
+            if let std::net::IpAddr::V4(v4) = ip {
+                if is_useful_iface(&name, &v4) {
+                    list.push(DlnaIface {
+                        name,
+                        ip: v4.to_string(),
+                    });
+                }
+            }
+        }
+    }
+    Ok(list)
 }
 
 /// 生成设备 UUID
@@ -304,21 +377,25 @@ fn handle_avt(
                 let _ = app.emit("dlna-request", payload);
                 println!("[DLNA] 收到投屏请求: {} (from {})", uri, client_ip);
             }
+            notify_last_change(app);
             soap_response("SetAVTransportURI", SERVICE_AVT, "")
         }
         "Play" => {
             mpv_set(app, "pause", json!(false));
             println!("[DLNA] Play");
+            notify_last_change(app);
             soap_response("Play", SERVICE_AVT, "")
         }
         "Pause" => {
             mpv_set(app, "pause", json!(true));
             println!("[DLNA] Pause");
+            notify_last_change(app);
             soap_response("Pause", SERVICE_AVT, "")
         }
         "Stop" => {
             mpv_cmd(app, "stop", vec![]);
             println!("[DLNA] Stop");
+            notify_last_change(app);
             soap_response("Stop", SERVICE_AVT, "")
         }
         "Seek" => {
@@ -326,6 +403,7 @@ fn handle_avt(
             let secs = parse_duration(&target);
             mpv_cmd(app, "seek", vec![json!(secs), json!("absolute")]);
             println!("[DLNA] Seek to {}", target);
+            notify_last_change(app);
             soap_response("Seek", SERVICE_AVT, "")
         }
         "Next" | "Previous" => soap_response(&action, SERVICE_AVT, ""),
@@ -385,6 +463,7 @@ fn handle_rc(app: &AppHandle, body: &str) -> String {
                     mpv_set(app, "volume", json!(n));
                 }
             }
+            notify_last_change(app);
             soap_response("SetVolume", SERVICE_RC, "")
         }
         "GetVolume" => {
@@ -402,6 +481,7 @@ fn handle_rc(app: &AppHandle, body: &str) -> String {
                 "mute",
                 json!(v == "1" || v.eq_ignore_ascii_case("true")),
             );
+            notify_last_change(app);
             soap_response("SetMute", SERVICE_RC, "")
         }
         "GetMute" => {
@@ -466,6 +546,7 @@ fn dispatch(
     device_name: &str,
     client_ip: &str,
     user_agent: &str,
+    announce_ip: &str,
 ) -> String {
     // 解析请求行
     let mut lines = request.lines();
@@ -481,7 +562,9 @@ fn dispatch(
     };
 
     match (method, path) {
-        ("GET", "/description.xml") => device_description(uuid, port, device_name),
+        ("GET", "/description.xml") | ("GET", "/device.xml") => {
+            device_description(uuid, port, device_name, announce_ip)
+        }
         ("GET", "/upnp/scpd/AVTransport.xml") => avt_scpd(),
         ("GET", "/upnp/scpd/RenderingControl.xml") => rc_scpd(),
         ("GET", "/upnp/scpd/ConnectionManager.xml") => cm_scpd(),
@@ -491,6 +574,12 @@ fn dispatch(
         }
         ("POST", "/upnp/control/RenderingControl") => handle_rc(app, body),
         ("POST", "/upnp/control/ConnectionManager") => handle_cm(body),
+        ("SUBSCRIBE", path) if path.starts_with("/upnp/event/") => {
+            handle_event_subscribe(app, request)
+        }
+        ("UNSUBSCRIBE", path) if path.starts_with("/upnp/event/") => {
+            handle_event_unsubscribe(app, request)
+        }
         ("GET", "/") => http_response(
             "200 OK",
             "text/html",
@@ -500,9 +589,148 @@ fn dispatch(
     }
 }
 
+// ===== GENA 事件订阅（LastChange 通知）=====
+
+/// 提取请求头字段值（从完整请求字符串）
+fn extract_header_val(request: &str, name: &str) -> Option<String> {
+    let lower_name = name.to_lowercase();
+    for line in request.lines() {
+        let lower_line = line.to_lowercase();
+        if lower_line.starts_with(&lower_name) {
+            if let Some(v) = lower_line.splitn(2, ':').nth(1) {
+                return Some(v.trim().to_string());
+            }
+        }
+        if line.is_empty() {
+            break;
+        }
+    }
+    None
+}
+
+/// 处理 SUBSCRIBE（GENA 订阅）：注册订阅者并返回 SID
+/// 第三方控制端（BubbleUPnP/VLC 等）投屏前必须订阅成功，否则判定设备不兼容
+fn handle_event_subscribe(app: &AppHandle, request: &str) -> String {
+    let callback = extract_header_val(request, "CALLBACK")
+        .unwrap_or_default()
+        .trim_matches('<')
+        .trim_matches('>')
+        .to_string();
+    let nt = extract_header_val(request, "NT").unwrap_or_default();
+    if callback.is_empty() || !nt.eq_ignore_ascii_case("upnp:event") {
+        return http_response(
+            "412 Precondition Failed",
+            "text/plain",
+            "Missing CALLBACK or NT",
+        );
+    }
+    // 从 callback 提取服务名（如 /upnp/event/AVTransport）
+    let sid = format!("uuid:{}", uuid::Uuid::new_v4());
+    if let Ok(mut subs) = app.state::<EventSubs>().0.lock() {
+        // 同 callback 重复订阅：替换旧 SID
+        subs.retain(|s| s.callback != callback);
+        subs.push(EventSubscriber {
+            sid: sid.clone(),
+            callback: callback.clone(),
+        });
+    }
+    println!("[DLNA] 事件订阅: {} -> {}", callback, sid);
+    // 订阅成功后立即发送一次当前状态（部分控制端等待 NOTIFY 后才更新 UI 状态）
+    let app2 = app.clone();
+    let cb = callback.clone();
+    let sid2 = sid.clone();
+    thread::spawn(move || {
+        send_last_change(&app2, &cb, &sid2);
+    });
+    format!(
+        "HTTP/1.1 200 OK\r\nSID: {}\r\nTIMEOUT: Second-1800\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+        sid
+    )
+}
+
+/// 处理 UNSUBSCRIBE：移除订阅者
+fn handle_event_unsubscribe(app: &AppHandle, request: &str) -> String {
+    let sid = extract_header_val(request, "SID").unwrap_or_default();
+    if let Ok(mut subs) = app.state::<EventSubs>().0.lock() {
+        subs.retain(|s| s.sid != sid);
+    }
+    println!("[DLNA] 事件退订: {}", sid);
+    http_response("200 OK", "text/plain", "")
+}
+
+/// 生成 LastChange 事件 XML（AVTransport 状态）
+fn last_change_xml(app: &AppHandle) -> String {
+    let paused = mpv_get(app, "pause", "flag").as_bool().unwrap_or(false);
+    let state = if paused { "PAUSED_PLAYBACK" } else { "PLAYING" };
+    format!(
+        r#"<Event xmlns="urn:schemas-upnp-org:metadata-1-0/AVT/"><InstanceID val="0"><TransportState val="{}"/></InstanceID></Event>"#,
+        state
+    )
+}
+
+/// 向单个订阅者发送 LastChange NOTIFY 事件（POST 到回调地址）
+fn send_last_change(app: &AppHandle, callback: &str, sid: &str) {
+    let url = callback.trim();
+    if !url.starts_with("http://") {
+        return;
+    }
+    let rest = &url[7..];
+    let (host_port, path) = match rest.find('/') {
+        Some(idx) => (&rest[..idx], &rest[idx..]),
+        None => (rest, "/"),
+    };
+    let (host, port) = match host_port.rsplit_once(':') {
+        Some((h, p)) => (h, p.parse::<u16>().unwrap_or(80)),
+        None => (host_port, 80),
+    };
+    let body = format!(
+        r#"<?xml version="1.0" encoding="utf-8"?>
+<e:propertyset xmlns:e="urn:schemas-upnp-org:event-1-0"><e:property><LastChange>{}</LastChange></e:property></e:propertyset>"#,
+        xml_escape(&last_change_xml(app))
+    );
+    let msg = format!(
+        "NOTIFY {} HTTP/1.1\r\nHOST: {}:{}\r\nCONTENT-TYPE: text/xml; charset=\"utf-8\"\r\nNT: upnp:event\r\nNTS: upnp:propchange\r\nSID: {}\r\nSEQ: 0\r\nCONTENT-LENGTH: {}\r\nCONNECTION: close\r\n\r\n{}",
+        path,
+        host,
+        port,
+        sid,
+        body.len(),
+        body
+    );
+    let _ = std::net::TcpStream::connect((host, port))
+        .and_then(|mut s| {
+            use std::io::Write;
+            s.write_all(msg.as_bytes())?;
+            let _ = s.set_read_timeout(Some(std::time::Duration::from_millis(800)));
+            let mut tmp = [0u8; 256];
+            let _ = s.read(&mut tmp);
+            Ok(())
+        })
+        .map_err(|e| eprintln!("[DLNA] LastChange 事件发送失败: {e}"));
+}
+
+/// 向全部订阅者广播 LastChange 事件（SOAP 状态动作后调用）
+fn notify_last_change(app: &AppHandle) {
+    let subs: Vec<(String, String)> = app
+        .state::<EventSubs>()
+        .0
+        .lock()
+        .map(|s| s.iter().map(|e| (e.callback.clone(), e.sid.clone())).collect())
+        .unwrap_or_default();
+    if subs.is_empty() {
+        return;
+    }
+    for (cb, sid) in subs {
+        let app = app.clone();
+        let cb = cb.clone();
+        let sid = sid.clone();
+        thread::spawn(move || send_last_change(&app, &cb, &sid));
+    }
+}
+
 /// 设备描述 XML（DLNA MediaRenderer 标准描述，含 X_DLNADOC + ConnectionManager）
-fn device_description(uuid: &str, port: u16, device_name: &str) -> String {
-    let ip = local_ip();
+fn device_description(uuid: &str, port: u16, device_name: &str, announce_ip: &str) -> String {
+    let ip = announce_ip;
     let base = format!("http://{}:{}", ip, port);
     let xml = format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -646,6 +874,7 @@ fn handle_conn(
     uuid: String,
     port: u16,
     device_name: String,
+    announce_ip: String,
 ) {
     let mut buf = Vec::new();
     let mut tmp = [0u8; 4096];
@@ -718,6 +947,7 @@ fn handle_conn(
         &device_name,
         &client_ip,
         &user_agent,
+        &announce_ip,
     );
     let _ = stream.write_all(response.as_bytes());
     let _ = stream.flush();
@@ -761,9 +991,15 @@ fn parse_content_length(header: &str) -> usize {
 // ===== 启动 =====
 /// 启动 DLNA Renderer（SSDP 广播 + HTTP 服务）
 /// device_name：投屏设备名称（来自设置，手机上显示）
-pub fn start(app: AppHandle, port_hint: u16, device_name: String) -> Result<(), String> {
-    // 注册会话状态
-    app.manage(DlnaSession(Mutex::new(String::new())));
+/// ip_override：用户指定的投屏网卡 IP（设置页选择），None = 自动选择
+pub fn start(
+    app: AppHandle,
+    port_hint: u16,
+    device_name: String,
+    ip_override: Option<String>,
+) -> Result<(), String> {
+    // 标记运行中（设置页开关可动态停止，见 stop()）
+    RUNNING.store(true, std::sync::atomic::Ordering::SeqCst);
 
     // 绑定 HTTP 端口（0.0.0.0 = 允许所有来源 IP）
     // 优先使用设置端口，被占用时自动随机绑定空闲端口
@@ -776,35 +1012,135 @@ pub fn start(app: AppHandle, port_hint: u16, device_name: String) -> Result<(), 
     };
     let actual_port = listener.local_addr().map(|a| a.port()).unwrap_or(port_hint);
 
+    // 保存 HTTP 监听器句柄（stop() 时关闭以结束 http 线程）
+    let holder = HTTP_LISTENER.get_or_init(|| std::sync::Mutex::new(None));
+    if let Ok(mut h) = holder.lock() {
+        *h = Some(listener.try_clone().map_err(|e| format!("克隆监听器失败: {e}"))?);
+    }
+
+    // 宣告用的局域网 IP（SSDP LOCATION / 设备描述），用户指定优先
+    let announce_ip = match &ip_override {
+        Some(ip) if !ip.trim().is_empty() => ip.clone(),
+        _ => local_ip(),
+    };
+
     // 更新状态（绑定 IP + 端口，供设置界面显示）
     let status_state = app.state::<DlnaStatusState>();
     if let Ok(mut s) = status_state.0.lock() {
         *s = Some(DlnaStatus {
-            ip: local_ip(),
+            ip: announce_ip.clone(),
             port: actual_port,
         });
     }
 
-    let uuid = new_uuid();
+    // 设备 UUID：持久化（每次安装生成一次），保证第三方控制端设备缓存稳定
+    let db = app.state::<crate::db::Db>();
+    let uuid = crate::db::get_or_create_device_uuid(&db).unwrap_or_else(|e| {
+        eprintln!("[DLNA] 读取持久 UUID 失败({e})，使用临时 UUID");
+        new_uuid()
+    });
     println!(
-        "[DLNA] Renderer 已启动, 端口: {}, 设备名: {}, UUID: {}",
-        actual_port, device_name, uuid
+        "[DLNA] Renderer 已启动, 端口: {}, 设备名: {}, UUID: {}, 宣告IP: {}",
+        actual_port, device_name, uuid, announce_ip
     );
     let app2 = app.clone();
     let uuid2 = uuid.clone();
     let name2 = device_name.clone();
 
+    // 记录 byebye 状态（应用退出时发送 ssdp:byebye 通知控制端设备下线）
+    if let Ok(mut s) = byebye_state().lock() {
+        *s = Some((uuid.clone(), actual_port));
+    }
+
     // SSDP 响应线程（UDP 1900），用实际端口广播
+    let ip_ov = ip_override.clone();
     thread::spawn(move || {
-        ssdp_loop(uuid2, actual_port);
+        ssdp_loop(uuid2, actual_port, ip_ov);
     });
 
     // HTTP 服务线程（使用已绑定的 listener）
     thread::spawn(move || {
-        http_loop(app2, listener, uuid, name2);
+        http_loop(app2, listener, uuid, name2, announce_ip);
     });
 
     Ok(())
+}
+
+/// 停止 DLNA 服务（设置页开关关闭时调用）：
+/// 1. 清空运行标志 → ssdp 循环退出（不再响应 M-SEARCH / 宣告 alive）
+/// 2. 发送 ssdp:byebye → 控制端立即移除设备（否则缓存期内手机仍能搜到旧设备）
+/// 3. 关闭 HTTP 监听器 → http 线程 accept 失败退出
+pub fn stop() {
+    if !RUNNING.swap(false, std::sync::atomic::Ordering::SeqCst) {
+        return; // 未运行，无需处理
+    }
+    println!("[DLNA] 服务停止");
+    send_byebye();
+    if let Ok(mut h) = HTTP_LISTENER.get_or_init(|| std::sync::Mutex::new(None)).lock() {
+        *h = None; // drop TcpListener → http 线程退出
+    }
+    if let Ok(mut s) = byebye_state().lock() {
+        *s = None;
+    }
+}
+
+/// 按最新设置重启 DLNA 服务（设置页修改 开关/设备名/网卡 后调用）
+/// 先停止旧服务（含 byebye 下线），再按新设置启动
+pub fn restart(
+    app: AppHandle,
+    port_hint: u16,
+    device_name: String,
+    ip_override: Option<String>,
+) -> Result<(), String> {
+    stop();
+    start(app, port_hint, device_name, ip_override)
+}
+
+/// 应用退出时发送 ssdp:byebye（尽力而为：枚举所有 IPv4 接口宣告设备下线）
+pub fn send_byebye() {
+    let (uuid, port) = match byebye_state().lock().map(|s| s.clone()) {
+        Ok(Some(s)) => s,
+        _ => return,
+    };
+    use socket2::{Domain, Protocol, Socket, Type};
+    let multicast: std::net::SocketAddr = "239.255.255.250:1900".parse().unwrap();
+    let ifaces = enumerate_v4();
+    let mut sent = 0;
+    for ip in ifaces {
+        let sock = match Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP)) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        // 发送源端口为 1900 的 socket（与系统共存）
+        let _ = sock.set_multicast_if_v4(&ip);
+        let uuid_nt = format!("uuid:{}", uuid);
+        let announcements: [(&str, String); 4] = [
+            (DEVICE_TYPE, format!("uuid:{}::{}", uuid, DEVICE_TYPE)),
+            (DEVICE_TYPE_2, format!("uuid:{}::{}", uuid, DEVICE_TYPE_2)),
+            (
+                "upnp:rootdevice",
+                format!("uuid:{}::upnp:rootdevice", uuid),
+            ),
+            (&uuid_nt, uuid_nt.clone()),
+        ];
+        for (nt, usn) in &announcements {
+            let msg = format!(
+                "NOTIFY * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nCACHE-CONTROL: max-age=1800\r\nDATE: {}\r\nLOCATION: http://{}:{}/description.xml\r\nNT: {}\r\nNTS: ssdp:byebye\r\nSERVER: Windows/10 UPnP/1.0 DLNADOC/1.50 ScreenCastReceiver/1.2\r\nUSN: {}\r\nBOOTID.UPNP.ORG: 1\r\nCONFIGID.UPNP.ORG: 1\r\n\r\n",
+                http_date(),
+                ip,
+                port,
+                nt,
+                usn
+            );
+            if sock
+                .send_to(msg.as_bytes(), &socket2::SockAddr::from(multicast))
+                .is_ok()
+            {
+                sent += 1;
+            }
+        }
+    }
+    println!("[DLNA] 已发送 ssdp:byebye 下线宣告（{} 个包）", sent);
 }
 
 /// 接口专用 SSDP 发送 socket：绑定到具体接口 IP，保证响应/alive 宣告的
@@ -828,19 +1164,52 @@ fn extract_st(msg: &str) -> Option<String> {
     None
 }
 
-/// SSDP 循环：响应 M-SEARCH 请求 + 周期性宣告 alive
-/// 使用 socket2 以支持：SO_REUSEADDR（Windows SSDP 服务占用 1900）+ 加入组播组
-fn ssdp_loop(uuid: String, port: u16) {
-    use socket2::{Domain, Protocol, Socket, Type};
+/// 判断接口是否可用于 DLNA 投屏（排除虚拟网卡 / 链路本地地址）。
+/// 关键：Tailscale(100.x/10.x)、Hyper-V vEthernet、169.254 链路本地等地址
+/// 对局域网手机不可达——第三方严格控制端(cling 等)拿到不可达的 LOCATION 会丢弃设备
+fn is_useful_iface(name: &str, ip: &std::net::Ipv4Addr) -> bool {
+    if ip.is_loopback() || ip.is_unspecified() {
+        return false;
+    }
+    // 169.254.x.x 链路本地（APIPA，无 DHCP 时的自动地址，不可达）
+    let oct = ip.octets();
+    if oct[0] == 169 && oct[1] == 254 {
+        return false;
+    }
+    let n = name.to_lowercase();
+    // 虚拟网卡黑名单（Tailscale / ZeroTier / VM / Hyper-V / Docker / WSL 等）
+    // 注意：Hyper-V 虚拟交换机在 Windows 上命名"vEthernet (...)"或"本地连接* N"（带星号）
+    const VIRTUAL: [&str; 14] = [
+        "tailscale",
+        "wintun",
+        "zerotier",
+        "vmnet",
+        "vmware",
+        "virtualbox",
+        "vethernet",
+        "hyper-v",
+        "docker",
+        "wsl",
+        "tun",
+        "tap",
+        "本地连接*",
+        "loopback",
+    ];
+    !VIRTUAL.iter().any(|v| n.contains(v))
+}
 
-    // 枚举所有 IPv4 接口（排除回环/未指定）
+/// 枚举所有可用的 IPv4 接口地址（过滤虚拟网卡 / 回环 / 链路本地）
+fn enumerate_v4() -> Vec<std::net::Ipv4Addr> {
     let mut iface_ips: Vec<std::net::Ipv4Addr> = Vec::new();
     match local_ip_address::list_afinet_netifas() {
         Ok(ifaces) => {
-            for (_name, ip) in ifaces {
+            for (name, ip) in ifaces {
                 if let std::net::IpAddr::V4(v4) = ip {
-                    if !v4.is_loopback() && !v4.is_unspecified() {
+                    if is_useful_iface(&name, &v4) {
+                        println!("[DLNA] 可用接口: {} = {}", name, v4);
                         iface_ips.push(v4);
+                    } else {
+                        println!("[DLNA] 过滤虚拟接口: {} = {}", name, v4);
                     }
                 }
             }
@@ -849,6 +1218,54 @@ fn ssdp_loop(uuid: String, port: u16) {
             eprintln!("[DLNA] 枚举网络接口失败: {e}");
         }
     }
+    iface_ips
+}
+
+/// 为每个接口创建专用 SSDP 发送 socket（绑定 接口IP:1900 + set_multicast_if），
+/// 保证 M-SEARCH 响应与 alive 宣告的源 IP 是手机可达的接口地址
+fn build_iface_socks(iface_ips: &[std::net::Ipv4Addr]) -> Vec<SsdpIfaceSocket> {
+    use socket2::{Domain, Protocol, Socket, Type};
+    let mut iface_socks: Vec<SsdpIfaceSocket> = Vec::new();
+    for ip in iface_ips {
+        let s = match Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP)) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        let _ = s.set_reuse_address(true);
+        let bind_addr: std::net::SocketAddr = format!("{}:{}", ip, SSDP_PORT).parse().unwrap();
+        if s.bind(&socket2::SockAddr::from(bind_addr)).is_err() {
+            // 个别接口（虚拟网卡）可能绑定失败，跳过不影响其他接口
+            continue;
+        }
+        let _ = s.set_multicast_if_v4(ip);
+        iface_socks.push(SsdpIfaceSocket {
+            ip: *ip,
+            sock: s.into(),
+        });
+    }
+    iface_socks
+}
+
+/// SSDP 循环：响应 M-SEARCH 请求 + 周期性宣告 alive + 监听网络变化自动重新宣告
+/// 使用 socket2 以支持：SO_REUSEADDR（Windows SSDP 服务占用 1900）+ 加入组播组
+/// ip_override：用户指定网卡 IP（设置页选择），Some 时只使用该网卡
+fn ssdp_loop(uuid: String, port: u16, ip_override: Option<String>) {
+    use socket2::{Domain, Protocol, Socket, Type};
+
+    // 接口列表：用户指定时只用指定接口；否则枚举物理接口
+    let mut iface_ips: Vec<std::net::Ipv4Addr> = match ip_override.as_deref() {
+        Some(ip) if !ip.trim().is_empty() => match ip.trim().parse::<std::net::Ipv4Addr>() {
+            Ok(v4) => {
+                println!("[DLNA] 使用用户指定网卡: {}", v4);
+                vec![v4]
+            }
+            Err(_) => {
+                eprintln!("[DLNA] 用户指定网卡 IP 无效: {}, 回退自动选择", ip);
+                enumerate_v4()
+            }
+        },
+        _ => enumerate_v4(),
+    };
 
     // 主接收 socket：0.0.0.0:1900（SO_REUSEADDR 与系统 SSDP 服务共存）
     let socket = match Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP)) {
@@ -887,26 +1304,7 @@ fn ssdp_loop(uuid: String, port: u16) {
     let _ = socket.set_multicast_loop_v4(true);
     let _ = socket.set_read_timeout(Some(std::time::Duration::from_millis(200)));
 
-    // 为每个接口创建专用发送 socket：绑定 接口IP:1900 + set_multicast_if，
-    // 保证 M-SEARCH 响应与 alive 宣告的源 IP 是手机可达的接口地址
-    let mut iface_socks: Vec<SsdpIfaceSocket> = Vec::new();
-    for ip in &iface_ips {
-        let s = match Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP)) {
-            Ok(s) => s,
-            Err(_) => continue,
-        };
-        let _ = s.set_reuse_address(true);
-        let bind_addr: std::net::SocketAddr = format!("{}:{}", ip, SSDP_PORT).parse().unwrap();
-        if s.bind(&socket2::SockAddr::from(bind_addr)).is_err() {
-            // 个别接口（虚拟网卡）可能绑定失败，跳过不影响其他接口
-            continue;
-        }
-        let _ = s.set_multicast_if_v4(ip);
-        iface_socks.push(SsdpIfaceSocket {
-            ip: *ip,
-            sock: s.into(),
-        });
-    }
+    let mut iface_socks = build_iface_socks(&iface_ips);
     if iface_socks.is_empty() {
         println!("[DLNA] 警告：未创建任何接口发送 socket，将使用默认路由接口兜底");
     } else {
@@ -920,13 +1318,39 @@ fn ssdp_loop(uuid: String, port: u16) {
     // 启动时主动宣告设备存在（ssdp:alive），多数手机 App 依赖 NOTIFY 发现设备
     send_alive_all(&iface_socks, &socket, &uuid, port, &multicast);
 
-    // 周期性重新宣告（每 30 秒，基于 Instant 计时，不依赖 recv 超时计数）
+    // 周期性重新宣告（每 30 秒）+ 网络变化检测（每 5 秒对比接口列表）
     let mut last_alive = std::time::Instant::now();
+    let mut last_net_check = std::time::Instant::now();
     let mut buf = [0u8; 4096];
-    loop {
-        if last_alive.elapsed() >= std::time::Duration::from_secs(30) {
+    while RUNNING.load(std::sync::atomic::Ordering::SeqCst) {
+        if last_alive.elapsed() >= std::time::Duration::from_secs(15) {
             send_alive_all(&iface_socks, &socket, &uuid, port, &multicast);
             last_alive = std::time::Instant::now();
+        }
+        // 网络变化（IP 变更 / 新网卡接入 / 网线断开）：重新加入组播 + 重建发送 socket + 立即宣告
+        if last_net_check.elapsed() >= std::time::Duration::from_secs(5) {
+            if ip_override.is_none() {
+                let cur = enumerate_v4();
+                if cur != iface_ips {
+                    println!(
+                        "[DLNA] 检测到网络接口变化: {:?} → {:?}，重新广播",
+                        iface_ips, cur
+                    );
+                    iface_ips = cur;
+                    let mut newly_joined = Vec::new();
+                    for ip in &iface_ips {
+                        if socket.join_multicast_v4(&group, ip).is_ok() {
+                            newly_joined.push(ip.to_string());
+                        }
+                    }
+                    if !newly_joined.is_empty() {
+                        println!("[DLNA] 新加入组播的接口: {}", newly_joined.join(", "));
+                    }
+                    iface_socks = build_iface_socks(&iface_ips);
+                    send_alive_all(&iface_socks, &socket, &uuid, port, &multicast);
+                }
+            }
+            last_net_check = std::time::Instant::now();
         }
         match socket.recv_from(&mut buf) {
             Ok((len, addr)) => {
@@ -945,10 +1369,61 @@ fn ssdp_loop(uuid: String, port: u16) {
                         // UPnP 1.0：响应 ST 回显请求值；无 ST 时用设备类型
                         let st = extract_st(&msg).unwrap_or_else(|| DEVICE_TYPE.to_string());
                         send_msearch_response(&iface_socks, &socket, &uuid, port, &st, &addr);
+                        // 兼容增强：向搜索来源单播 alive 宣告。
+                        // Android 上部分 DLNA 库（cling 类 DMC）依赖 NOTIFY 添加设备，
+                        // 且手机未获取 MulticastLock 时收不到组播 NOTIFY，只能收单播响应。
+                        // 单播 alive 不依赖 MulticastLock，可显著提高 cling 类 App 的发现率
+                        send_alive_to(&iface_socks, &socket, &uuid, port, &addr);
                     }
                 }
             }
             Err(_) => {}
+        }
+    }
+}
+
+/// 向指定来源单播发送 alive 宣告（NOTIFY ssdp:alive，目标 = M-SEARCH 请求者地址）。
+/// cling 类 DMC 依赖 NOTIFY 将设备加入 Registry，Android 手机未拿 MulticastLock 时
+/// 收不到组播 NOTIFY 但能收单播——故收到 M-SEARCH 后除标准响应外再补发单播 alive
+fn send_alive_to(
+    ifaces: &[SsdpIfaceSocket],
+    fallback: &std::net::UdpSocket,
+    uuid: &str,
+    port: u16,
+    to: &std::net::SocketAddr,
+) {
+    let uuid_nt = format!("uuid:{}", uuid);
+    let announcements: [(&str, String); 3] = [
+        (
+            DEVICE_TYPE,
+            format!("uuid:{}::{}", uuid, DEVICE_TYPE),
+        ),
+        (
+            "upnp:rootdevice",
+            format!("uuid:{}::upnp:rootdevice", uuid),
+        ),
+        (&uuid_nt, uuid_nt.clone()),
+    ];
+    let notify = |ip: &str, nt: &str, usn: &str| {
+        format!(
+            "NOTIFY * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nCACHE-CONTROL: max-age=1800\r\nDATE: {}\r\nLOCATION: http://{}:{}/description.xml\r\nNT: {}\r\nNTS: ssdp:alive\r\nSERVER: Windows/10 UPnP/1.0 DLNADOC/1.50 ScreenCastReceiver/1.2\r\nUSN: {}\r\nBOOTID.UPNP.ORG: 1\r\nCONFIGID.UPNP.ORG: 1\r\n\r\n",
+            http_date(),
+            ip,
+            port,
+            nt,
+            usn
+        )
+    };
+    if ifaces.is_empty() {
+        for (nt, usn) in &announcements {
+            let _ = fallback.send_to(notify(&local_ip(), nt, usn).as_bytes(), to);
+        }
+        return;
+    }
+    for s in ifaces {
+        let ip = s.ip.to_string();
+        for (nt, usn) in &announcements {
+            let _ = s.sock.send_to(notify(&ip, nt, usn).as_bytes(), to);
         }
     }
 }
@@ -1084,14 +1559,21 @@ fn send_msearch_response(
 }
 
 /// HTTP 循环：接受 TCP 连接（listener 已在 start 中绑定）
-fn http_loop(app: AppHandle, listener: TcpListener, uuid: String, device_name: String) {
+fn http_loop(
+    app: AppHandle,
+    listener: TcpListener,
+    uuid: String,
+    device_name: String,
+    announce_ip: String,
+) {
     for stream in listener.incoming() {
         if let Ok(stream) = stream {
             let app = app.clone();
             let uuid = uuid.clone();
             let name = device_name.clone();
+            let ip = announce_ip.clone();
             let port = listener.local_addr().map(|a| a.port()).unwrap_or(0);
-            thread::spawn(move || handle_conn(app, stream, uuid, port, name));
+            thread::spawn(move || handle_conn(app, stream, uuid, port, name, ip));
         }
     }
 }
