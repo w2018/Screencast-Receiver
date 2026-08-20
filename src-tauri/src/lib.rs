@@ -84,6 +84,10 @@ pub fn run() {
                     .filter(|v| !v.is_empty())
                     .unwrap_or_else(|| "投屏助手".to_string())
             };
+            // 同步 OS 窗口标题为设备名（任务栏预览/Alt+Tab 显示，避免 tauri.conf.json 中文硬编码乱码）
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.set_title(&dlna_name);
+            }
             // 用户指定的投屏网卡 IP（设置页选择；为空 = 自动选择）
             let dlna_iface = {
                 let db = app.state::<db::Db>();
